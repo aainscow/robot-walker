@@ -20,7 +20,7 @@
     mode: 'build', tool: 'stick', ctool: 'block',
     course: { obstacles: [] },
     design: null, nextId: 1,
-    opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 } },
+    opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 }, method: 'ga' },
     trainer: null, running: false, speed: 4, ghosts: true,
     bestEver: null, history: [],
     watch: null, wspeed: 1, wlen: 'train', showBrain: true, brainFocus: null, brainHover: null, guide: null,
@@ -428,6 +428,7 @@
       updateLive();
     } else acc = 0;
     if (S.mode === 'watch' && S.watch) stepWatch(dt);
+    if (S.mode === 'lab') RW.Lab.update(dt);
     render();
     requestAnimationFrame(frame);
   }
@@ -465,6 +466,7 @@
     // the view shrinks when the brain panel opens below it
     if (canvas.clientWidth !== W || canvas.clientHeight !== H) { resize(); fitBuildCamera(); }
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (S.mode === 'lab') { RW.Lab.draw(ctx, W, H); drawHud(); drawBrain(); return; }
     if (S.mode === 'build') {
       if (!S.buildCam) fitBuildCamera();
       Object.assign(S.cam, S.buildCam);
@@ -1022,6 +1024,10 @@
     $('#strength').value = S.opts.strength; $('#strengthOut').textContent = (+S.opts.strength).toFixed(1) + '×';
     const b = S.bestEver;
     $('#winfo').textContent = b ? `Best brain so far, from generation ${b.generation}: ${b.time != null ? 'finished in ' + b.time.toFixed(1) + 's' : 'got ' + fmtDist(b.distance)}${b.fallen ? ' then fell over' : ''}, head kept level ${Math.round((b.level ?? 1) * 100)}% of the time.` : 'Nothing learned yet. Train your robot first.';
+    $$('#method button').forEach(b => b.classList.toggle('on', b.dataset.method === S.opts.method));
+    $('#mhint').innerHTML = S.opts.method === 'es'
+      ? '<b>Nudge &amp; compare</b> (an evolution strategy): there is one brain. Each generation, robots try it with small random nudges, each nudge both ways (+ and −). Whichever way of each pair did better shows which direction helps, and the brain takes one blended step that way. Every robot’s result counts, not just the winners’. In our tests it did best on big brains (16 units with memory) and worse on the small default brain. See it happen in the “How it learns” tab.'
+      : '<b>Copy the best</b> (a genetic algorithm): every robot has its own brain. The best few survive unchanged; the rest are replaced by mixes of good parents with small random mutations. Like breeding: only the winners pass anything on. In our tests it learned fastest on the small default brain. See it happen in the “How it learns” tab.';
     const br = RW.analyse(S.design);
     $('#bhidden').value = String(br.hidden); $('#bmemory').checked = br.memory;
     $('#bhint').textContent = `${RW.genomeLength(br)} numbers to learn. A bigger brain, or one with memory, can hold cleverer behaviour, but has more numbers for evolution to tune, so it learns more slowly. On the starter courses the 8-unit brain learns best in 40 generations; try the others on harder courses, with more robots or more patience. Changing these starts learning again.`;
@@ -1045,6 +1051,7 @@
     if (S.mode === 'train') S.running = false;
     S.mode = m;
     if (m === 'watch') startWatch();
+    if (m === 'lab') RW.Lab.enter();
     if (m === 'train') { ensureTrainer(); S.cam.x = 1; }
     updateUI();
   }
@@ -1082,6 +1089,12 @@
     if (S.bestEver) S.bestEver = { ...S.bestEver, fitness: -Infinity };
     restartTrainerKeepingBest();
   }
+  // Switching learning method carries on from the best brain so far.
+  $$('#method button').forEach(b => b.addEventListener('click', () => {
+    if (S.opts.method === b.dataset.method) return;
+    S.opts.method = b.dataset.method;
+    restartTrainerKeepingBest();
+  }));
   // The brain's shape is part of the robot: changing it means a fresh brain.
   function brainChanged(patch) {
     S.design.brain = { ...(S.design.brain || {}), ...patch };
@@ -1113,6 +1126,7 @@
   if (!load()) S.design = RW.PRESETS.dog.design();
   S.nextId = 1 + Math.max(0, ...S.design.points.map(p => p.id), ...S.design.sticks.map(s => s.id));
   updateLocked();
+  RW.Lab.init();
   updateUI();
   requestAnimationFrame(frame);
   window.__RW_STATE = S; // handy for poking at from the console

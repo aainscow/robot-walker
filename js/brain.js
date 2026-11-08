@@ -107,6 +107,60 @@
     return next;
   };
 
+  // Evolution strategy (the "smarter" learning method, after OpenAI's ES).
+  // Instead of keeping winners and copying them with random changes, it keeps
+  // ONE brain (the mean) and each generation tries pairs of small nudges to it:
+  // +nudge and -nudge. Comparing how each pair did shows which direction made
+  // things better, and all those directions are blended into one step for the
+  // whole brain. Every robot's result counts, not just the winners'.
+  class ES {
+    constructor(mean, opts) {
+      this.mean = Float32Array.from(mean);
+      this.n = mean.length;
+      this.sigma = opts.sigma || 0.1;    // size of the trial nudges
+      this.lr = opts.lr || 0.1;          // size of the step taken each generation
+      this.m = new Float32Array(this.n); // Adam optimiser state: smoothed direction...
+      this.v = new Float32Array(this.n); // ...and smoothed size of recent steps
+      this.t = 0;
+    }
+    // A population: the mean itself, then +/- pairs of random nudges.
+    ask(popSize) {
+      const pairs = Math.max(1, Math.floor((popSize - 1) / 2));
+      this.eps = [];
+      const pop = [Float32Array.from(this.mean)];
+      for (let k = 0; k < pairs; k++) {
+        const e = new Float32Array(this.n);
+        for (let i = 0; i < this.n; i++) e[i] = gauss();
+        this.eps.push(e);
+        const a = new Float32Array(this.n), b = new Float32Array(this.n);
+        for (let i = 0; i < this.n; i++) { a[i] = this.mean[i] + this.sigma * e[i]; b[i] = this.mean[i] - this.sigma * e[i]; }
+        pop.push(a, b);
+      }
+      return pop;
+    }
+    // fitness[] in the same order as ask() returned.
+    tell(fitness) {
+      const k = this.eps.length, f = fitness.slice(1, 1 + 2 * k);
+      // Use ranks, not raw scores, so one lucky robot can't drag everything.
+      const order = [...f.keys()].sort((a, b) => f[a] - f[b]), rank = new Float32Array(f.length);
+      order.forEach((idx, r) => { rank[idx] = r / (f.length - 1) - 0.5; });
+      const grad = new Float32Array(this.n);
+      for (let j = 0; j < k; j++) {
+        const w = rank[2 * j] - rank[2 * j + 1], e = this.eps[j];
+        if (w) for (let i = 0; i < this.n; i++) grad[i] += w * e[i];
+      }
+      this.t++;
+      const b1 = 0.9, b2 = 0.999, c1 = 1 - Math.pow(b1, this.t), c2 = 1 - Math.pow(b2, this.t);
+      for (let i = 0; i < this.n; i++) {
+        const gi = grad[i] / (k * this.sigma) - 0.005 * this.mean[i]; // small pull towards 0 keeps weights sensible
+        this.m[i] = b1 * this.m[i] + (1 - b1) * gi;
+        this.v[i] = b2 * this.v[i] + (1 - b2) * gi * gi;
+        this.mean[i] += this.lr * (this.m[i] / c1) / (Math.sqrt(this.v[i] / c2) + 1e-8);
+      }
+    }
+  }
+  RW.ES = ES;
+
   // Runs one generation at a time: N worlds, N robots, N brains.
   class Trainer {
     constructor(design, opts) {
@@ -117,13 +171,20 @@
       this.strength = opts.strength || 1;
       this.rules = opts.rules || RW.DEFAULT_RULES;
       this.course = opts.course || null;
+      this.method = opts.method || 'ga';   // 'ga': copy the best | 'es': evolution strategy
       this.generation = 0;
       this.history = [];              // [{best, fit, avg, finished, fell, level}]
       this.bestEver = null;           // {genome, fitness, distance, time, level, fallen, generation}
       this.stall = 0;
       this.pop = [];
-      if (opts.seed) this.pop.push(Float32Array.from(opts.seed.genome)), this.bestEver = opts.seed;
-      while (this.pop.length < this.popSize) this.pop.push(RW.randomGenome(this.info));
+      if (opts.seed) this.bestEver = opts.seed;
+      if (this.method === 'es') {
+        this.es = new ES(opts.seed ? opts.seed.genome : RW.randomGenome(this.info), opts);
+        this.pop = this.es.ask(this.popSize);
+      } else {
+        if (opts.seed) this.pop.push(Float32Array.from(opts.seed.genome));
+        while (this.pop.length < this.popSize) this.pop.push(RW.randomGenome(this.info));
+      }
       this.startGeneration();
     }
 
@@ -167,9 +228,14 @@
         this.bestEver = { genome: Float32Array.from(b.genome), fitness: fit[bi], distance: b.dist, time: b.finishTime, level: b.level, fallen: b.fallen, generation: this.generation + 1 };
         this.stall = 0;
       } else this.stall++;
-      // Stuck for a while? Mutate harder to shake things up.
-      const sigma = this.stall > 8 ? 0.6 : 0.25;
-      this.pop = RW.evolve(this.pop, fit, { sigma, rate: 0.1 });
+      if (this.method === 'es') {
+        this.es.tell(fit);
+        this.pop = this.es.ask(this.popSize);
+      } else {
+        // Stuck for a while? Mutate harder to shake things up.
+        const sigma = this.stall > 8 ? 0.6 : 0.25;
+        this.pop = RW.evolve(this.pop, fit, { sigma, rate: 0.1 });
+      }
       this.generation++;
       this.startGeneration();
     }

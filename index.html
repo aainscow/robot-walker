@@ -14,6 +14,7 @@
     <button data-mode="course">2 · Course</button>
     <button data-mode="train">3 · Train</button>
     <button data-mode="watch">4 · Watch best</button>
+    <button data-mode="lab">5 · How it learns</button>
   </nav>
 </header>
 <main>
@@ -75,6 +76,11 @@
       <h2>Rules</h2>
       <label class="row check"><input id="rfall" type="checkbox" checked> Head touching the ground ends the run</label>
       <label class="row">Keep the head level <select id="rlevel"><option value="0">Don’t care</option><option value="2">A bit</option><option value="6">Strictly</option></select></label>
+      <h2>Learning method</h2>
+      <div class="seg" id="method">
+        <button data-method="ga">Copy the best</button><button data-method="es">Nudge &amp; compare</button>
+      </div>
+      <p class="hint" id="mhint"></p>
       <h2>Brain</h2>
       <label class="row">Hidden units <select id="bhidden"><option value="4">4</option><option value="8">8</option><option value="16">16</option><option value="24">24</option></select></label>
       <label class="row check"><input id="bmemory" type="checkbox"> Memory: it remembers the moment before</label>
@@ -85,6 +91,19 @@
       <label class="row check"><input id="ghosts" type="checkbox" checked> Show the whole generation</label>
       <button id="reset" class="ghost">Forget everything learned</button>
       <p class="hint">Every robot in a generation gets its own brain. The ones that get furthest are the parents of the next generation, with small random mutations. Give it a few dozen generations.</p>
+    </section>
+
+    <section data-for="lab" hidden>
+      <div id="labText" class="guide"></div>
+      <button id="labNext" class="big">Start ▶</button>
+      <label class="row check"><input id="labAuto" type="checkbox"> Play it automatically</label>
+      <div class="seg" id="labSpeed"><button data-speed="1">Race 1×</button><button data-speed="3">3×</button><button data-speed="0">Instant</button></div>
+      <h2>Learning method</h2>
+      <div class="seg" id="labMethod"><button data-method="ga">Copy the best</button><button data-method="es">Nudge &amp; compare</button></div>
+      <label class="row check"><input id="labMap" type="checkbox"> Show the map of every brain (cheat!)</label>
+      <button id="labReset" class="ghost">Start over</button>
+      <p id="labStats" class="hint"></p>
+      <p class="hint">The real robots learn in exactly the same way. Their brains just have hundreds of numbers instead of two, so nobody can draw their map.</p>
     </section>
 
     <section data-for="watch" hidden>
@@ -120,6 +139,7 @@
 <script src="js/brain.js"></script>
 <script src="js/presets.js"></script>
 <script src="js/brainview.js"></script>
+<script src="js/lab.js"></script>
 <script src="js/game.js"></script>
 </body>
 </html>

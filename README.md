@@ -44,6 +44,12 @@ folder: `python3 -m http.server 8107`.
    tests (dog on Hurdles, walker on flat, 3 runs each, 40 generations) the
    8-unit brain without memory still learned best: more numbers to tune
    means slower evolution.
+   **Learning method**: *Copy the best* (a genetic algorithm: winners survive,
+   the rest are replaced by mutated copies) or *Nudge & compare* (an evolution
+   strategy: one brain, tried with random nudges both ways, then a step in the
+   direction that helped). Over 3 runs x 40 generations, Copy the best did
+   better on the default brain (dog/hurdles 25.2 vs 21.4, walker/flat 23.7 vs
+   17.6); Nudge & compare did better on 16 units with memory (26.0 vs 24.6).
 4. **Watch best**: replay the best brain so far in real time, with the
    accelerometer's reading drawn as a green arrow.
    "Run for" lets the replay carry on past the finish line and the training
@@ -63,6 +69,14 @@ folder: `python3 -m http.server 8107`.
 
 The design and the best brain are saved in the browser's localStorage.
 
+5. **How it learns**: a learning lab with the simplest possible learner, an
+   inchworm whose second servo is driven by a brain of just two numbers, A and
+   B. Because there are only two, every possible brain is a point on a map,
+   and the lab draws the whole map (how far each pair crawls). Step through
+   generations of either method and watch what happens: the race, the scores,
+   choosing winners or comparing nudge pairs, and the next generation, with a
+   plain-words explanation of each step.
+
 ## Code
 
 - `js/sim.js`: design → planck.js bodies and joints; servo control; accelerometer.
@@ -70,6 +84,8 @@ The design and the best brain are saved in the browser's localStorage.
   servo targets out) and the genetic algorithm (`Trainer`).
 - `js/presets.js`: starter robots.
 - `js/game.js`: editor, training loop, replay, drawing.
+- `js/brainview.js`: the live brain diagram and its explanations.
+- `js/lab.js`: the How it learns lab.
 - `vendor/planck.min.js`: planck.js 1.5.1 (MIT), a Box2D port.
 
 Courses are `{ obstacles: [{type: 'block'|'ramp'|'bump', x, w, h, dir}] }` in

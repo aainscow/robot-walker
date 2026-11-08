@@ -17,6 +17,7 @@ aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; co
 aside h2:first-child { margin-top: 0; }
 #stage { flex: 1; position: relative; min-width: 0; display: flex; flex-direction: column; }
 #view { position: relative; flex: 1; min-height: 0; width: 100%; touch-action: none; display: block; }
+#brain[hidden] { display: none; }
 #brain { flex: none; height: 46%; min-height: 160px; width: 100%; display: block; border-top: 1px solid var(--line); }
 .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .tools button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font-size: 12px; text-align: center; }
@@ -33,6 +34,7 @@ aside h2:first-child { margin-top: 0; }
 .tip p:last-child, .guide p:last-child { margin-bottom: 0; }
 .tip-dim { color: var(--muted) !important; }
 .guide { background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 13px; line-height: 1.45; }
+.formula { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--panel); border-radius: 6px; padding: 6px 8px; color: #ffd43b !important; }
 .guide-nav { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
 .guide-nav span { flex: 1; text-align: center; color: var(--muted); font-size: 12px; }
 .guide-nav button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
