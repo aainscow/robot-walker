@@ -89,6 +89,7 @@
       this.timeLimit = opts.timeLimit || 15;
       this.strength = opts.strength || 1;
       this.rules = opts.rules || RW.DEFAULT_RULES;
+      this.course = opts.course || null;
       this.generation = 0;
       this.history = [];              // [{best, fit, avg, finished, fell, level}]
       this.bestEver = null;           // {genome, fitness, distance, time, level, fallen, generation}
@@ -102,7 +103,7 @@
     startGeneration() {
       this.t = 0;
       this.agents = this.pop.map(genome => {
-        const run = new RW.Run(this.design, new Brain(genome, this.info), { strength: this.strength, rules: this.rules });
+        const run = new RW.Run(this.design, new Brain(genome, this.info), { strength: this.strength, rules: this.rules, course: this.course });
         run.genome = genome;
         return run;
       });

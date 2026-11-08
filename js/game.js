@@ -13,10 +13,12 @@
     grid: 'rgba(30,60,100,.08)', grid2: 'rgba(30,60,100,.16)',
     stick: '#2b3954', servo: '#ffb020', hinge: '#ffffff', weld: '#5b6b88', accel: '#3ad29f',
     hover: '#ff4f9a', ghost: '#2b3954', lead: '#d9480f', head: '#e8eef8', fell: '#d6336c',
+    rock: '#9aa5b8', rockEdge: '#5d6880', zone: 'rgba(58,210,159,.12)',
   };
 
   const S = {
-    mode: 'build', tool: 'stick',
+    mode: 'build', tool: 'stick', ctool: 'block',
+    course: { obstacles: [] },
     design: null, nextId: 1,
     opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 } },
     trainer: null, running: false, speed: 4, ghosts: true,
@@ -30,7 +32,7 @@
   function save() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        design: S.design, opts: S.opts,
+        design: S.design, opts: S.opts, course: S.course,
         bestEver: S.bestEver && { ...S.bestEver, genome: Array.from(S.bestEver.genome) },
         history: S.history,
       }));
@@ -43,6 +45,7 @@
       S.design = d.design; S.opts = { ...S.opts, ...d.opts, rules: { ...S.opts.rules, ...(d.opts && d.opts.rules) } };
       if (d.bestEver) S.bestEver = { ...d.bestEver, genome: Float32Array.from(d.bestEver.genome) };
       S.history = d.history || [];
+      if (d.course && Array.isArray(d.course.obstacles)) S.course = d.course;
       return true;
     } catch (e) { return false; }
   }
@@ -133,6 +136,7 @@
   function evPos(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
 
   canvas.addEventListener('pointerdown', e => {
+    if (S.mode === 'course') return courseDown(e);
     if (S.mode !== 'build') return;
     const [sx, sy] = evPos(e);
     const [wx, wy] = toWorld(sx, sy);
@@ -181,6 +185,7 @@
   canvas.addEventListener('pointermove', e => {
     const [sx, sy] = evPos(e);
     S.mouse = [sx, sy];
+    if (S.mode === 'course') return courseMove(e);
     if (S.mode !== 'build') return;
     const [wx, wy] = toWorld(sx, sy);
     if (S.drag && S.drag.kind === 'move') {
@@ -192,6 +197,7 @@
 
   canvas.addEventListener('pointercancel', () => { S.drag = null; });
   canvas.addEventListener('pointerup', e => {
+    if (S.mode === 'course') return courseUp(e);
     if (S.mode !== 'build' || !S.drag) return;
     const d = S.drag; S.drag = null;
     setTimeout(refitIfOffscreen, 0);
@@ -220,6 +226,111 @@
     }
   });
 
+  // ---------- course editor ----------
+  function clampCourseX(x) {
+    const half = W / 2 / S.cam.s, lo = -1 + half, hi = RW.COURSE_END + 1 - half;
+    return lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, x == null ? lo : x));
+  }
+  function scrollCourse(x) {
+    S.courseX = clampCourseX(x);
+    const r = $('#cscroll');
+    r.value = String(Math.round(1000 * (S.courseX + 1) / (RW.COURSE_END + 2)));
+  }
+  canvas.addEventListener('wheel', e => {
+    if (S.mode !== 'course') return;
+    e.preventDefault();
+    scrollCourse(clampCourseX(S.courseX) + (e.deltaX || e.deltaY) / S.cam.s);
+  }, { passive: false });
+  const clampH = h => Math.max(0.05, Math.min(2, h));
+  function hitObstacle(wx, wy) {
+    for (let i = S.course.obstacles.length - 1; i >= 0; i--) {
+      const o = S.course.obstacles[i];
+      if (wx >= o.x - 0.05 && wx <= o.x + o.w + 0.05 && wy >= -0.05 && wy <= o.h + 0.1) return o;
+    }
+    return null;
+  }
+  // The obstacle a drag from (x0,y0) to (x1,y1) would make.
+  function dragObstacle(d, x1, y1) {
+    const type = S.ctool;
+    const a = Math.min(d.x0, x1), b = Math.max(d.x0, x1);
+    const o = { type, x: a, w: b - a, h: clampH(Math.max(y1, type === 'ramp' ? 0 : d.y0)), dir: x1 >= d.x0 ? 1 : -1 };
+    return o;
+  }
+  function courseDown(e) {
+    const [sx, sy] = evPos(e), [wx, wy] = toWorld(sx, sy);
+    canvas.setPointerCapture(e.pointerId);
+    const t = S.ctool;
+    if (t === 'erase') {
+      const o = hitObstacle(wx, wy);
+      if (o) { S.course.obstacles = S.course.obstacles.filter(q => q !== o); courseChanged(); }
+    } else if (t === 'cmove') {
+      const o = hitObstacle(wx, wy);
+      if (o) S.drag = { kind: 'cmove', o, dx: wx - o.x, moved: false };
+    } else {
+      S.drag = { kind: 'new', x0: snap(wx), y0: Math.max(0, snap(wy)) };
+    }
+  }
+  function courseMove(e) {
+    const [sx, sy] = evPos(e), [wx, wy] = toWorld(sx, sy);
+    const d = S.drag;
+    if (d && d.kind === 'cmove') {
+      d.o.x = Math.max(RW.START_ZONE, Math.min(RW.COURSE_END - d.o.w, snap(wx - d.dx)));
+      d.moved = true;
+    }
+    if (d && d.kind === 'new') d.preview = dragObstacle(d, snap(wx), Math.max(0, snap(wy)));
+    S.hover = (S.ctool === 'erase' || S.ctool === 'cmove') && !d ? (o => o && { obstacle: o })(hitObstacle(wx, wy)) : null;
+    canvas.style.cursor = S.hover ? 'pointer' : 'crosshair';
+  }
+  function courseUp(e) {
+    const d = S.drag; S.drag = null;
+    if (!d) return;
+    if (d.kind === 'cmove') { if (d.moved) courseChanged(); return; }
+    const [sx, sy] = evPos(e), [wx, wy] = toWorld(sx, sy);
+    const o = dragObstacle(d, snap(wx), Math.max(0, snap(wy)));
+    if (o.w < 0.1) { toast('Drag sideways to set how wide it is, and up for how tall'); return; }
+    if (o.x < RW.START_ZONE) { toast('Keep the green start area clear'); return; }
+    if (o.x + o.w > RW.COURSE_END) o.w = RW.COURSE_END - o.x;
+    if (S.course.obstacles.length >= 40) { toast('40 obstacles is the limit'); return; }
+    o.id = 1 + Math.max(0, ...S.course.obstacles.map(q => q.id));
+    S.course.obstacles.push(o);
+    courseChanged();
+  }
+  function drawCourseEditor() {
+    // the robot at the start, for scale
+    if (S.design.points.length) {
+      let minX = Infinity, minY = Infinity;
+      for (const p of S.design.points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); }
+      const dx = -minX, dy = RW.FOOT_R + 0.01 - minY, w = Math.max(2, stickWidth());
+      ctx.globalAlpha = 0.6;
+      for (const s of S.design.sticks) {
+        const a = pointById(s.a), b = pointById(s.b);
+        const [ax, ay] = toScreen(a.x + dx, a.y + dy), [bx, by] = toScreen(b.x + dx, b.y + dy);
+        drawSegment(ax, ay, bx, by, COLORS.stick, w);
+      }
+      const h = pointById(S.design.head);
+      if (h) { const [hx, hy] = toScreen(h.x + dx, h.y + dy); drawHead(hx, hy, RW.HEAD_R * S.cam.s, 0, false); }
+      ctx.globalAlpha = 1;
+    }
+    if (S.drag && S.drag.kind === 'new' && S.drag.preview && S.drag.preview.w > 0.01) {
+      const o = S.drag.preview;
+      drawObstacle(o, false, true);
+      const [lx, ly] = toScreen(o.x + o.w / 2, o.h);
+      ctx.fillStyle = '#1d2a3a'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText(`${o.w.toFixed(2)} m wide · ${o.h.toFixed(2)} m tall`, lx, ly - 10);
+    }
+    if (!S.course.obstacles.length && !S.drag) {
+      ctx.fillStyle = 'rgba(29,42,58,.6)'; ctx.font = '16px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('Drag on the track to add an obstacle, or pick a course on the left', W / 2, H * 0.3);
+    }
+  }
+  // A new course doesn't change the brain's shape, so keep the brain and let it
+  // carry on learning; only the old best score no longer compares.
+  function courseChanged() {
+    if (S.bestEver) S.bestEver = { ...S.bestEver, fitness: -Infinity };
+    S.trainer = null; S.running = false; S.watch = null;
+    save(); updateUI();
+  }
+
   // Dropping a point on top of another joins them.
   function mergeAt(p) {
     const other = S.design.points.find(q => q !== p && Math.hypot(q.x - p.x, q.y - p.y) < 0.02);
@@ -245,7 +356,7 @@
     if (S.trainer) return true;
     const why = canTrain();
     if (why) { toast(why); return false; }
-    S.trainer = new RW.Trainer(S.design, { ...S.opts, seed: S.bestEver });
+    S.trainer = new RW.Trainer(S.design, { ...S.opts, course: S.course, seed: S.bestEver });
     S.trainer.history = S.history;
     S.trainer.generation = S.history.length;
     return true;
@@ -260,9 +371,9 @@
   function startWatch() {
     if (!S.bestEver) { S.watch = null; return; }
     const brain = new RW.Brain(S.bestEver.genome, RW.analyse(S.design));
-    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules });
+    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules, course: S.course });
     S.watch.result = null; S.watch.hold = 0;
-    S.cam.x = S.watch.robot.startX + 1;
+    S.cam.x = 1;
   }
 
   // ---------- main loop ----------
@@ -310,6 +421,11 @@
     if (S.mode === 'build') {
       if (!S.buildCam) fitBuildCamera();
       Object.assign(S.cam, S.buildCam);
+    } else if (S.mode === 'course') {
+      // close enough to edit small obstacles; scroll along with the wheel or slider
+      S.cam.s = Math.max(W / (RW.COURSE_END + 2), Math.min(130, H / 5));
+      S.cam.x = clampCourseX(S.courseX);
+      S.cam.y = (H * 0.25) / S.cam.s;
     } else {
       S.cam.s = Math.min(150, Math.max(50, H / 4));
       S.cam.y = (H / 2 - H * 0.78) / -S.cam.s;
@@ -320,17 +436,14 @@
     }
     drawWorld();
     if (S.mode === 'build') drawDesign();
+    else if (S.mode === 'course') drawCourseEditor();
     else if (S.mode === 'train' && S.trainer) drawTraining();
     else if (S.mode === 'watch' && S.watch) drawRobot(S.watch.robot, { alpha: 1, lead: true, sensors: true, fallen: S.watch.fallen });
     drawHud();
   }
 
-  function startX() {
-    if (S.mode === 'build') return 0;
-    if (S.mode === 'train' && S.trainer) return S.trainer.agents[0].robot.startX;
-    if (S.mode === 'watch' && S.watch) return S.watch.robot.startX;
-    return 0;
-  }
+  // The start line is x = 0; distances are measured from it.
+  function startX() { return 0; }
 
   function drawWorld() {
     const g = ctx.createLinearGradient(0, 0, 0, H);
@@ -363,6 +476,12 @@
       ctx.lineTo(W, gy); ctx.fill();
     }
 
+    if (S.mode === 'course') {
+      const [zx0] = toScreen(-5, 0), [zx1] = toScreen(RW.START_ZONE, 0);
+      ctx.fillStyle = COLORS.zone; ctx.fillRect(zx0, 0, zx1 - zx0, gy);
+      ctx.fillStyle = 'rgba(13,94,68,.7)'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('start area', (Math.max(0, zx0) + zx1) / 2, 20);
+    }
     // ground
     ctx.fillStyle = COLORS.dirt; ctx.fillRect(0, gy, W, H - gy);
     ctx.fillStyle = COLORS.ground; ctx.fillRect(0, gy, W, 8);
@@ -385,6 +504,21 @@
     // finish flag
     const [fx] = toScreen(sx0 + RW.FINISH, 0);
     if (fx > -40 && fx < W + 40) drawFlag(fx, gy);
+    drawObstacles();
+  }
+
+  function drawObstacles(highlight) {
+    for (const o of S.course.obstacles) drawObstacle(o, S.hover && S.hover.obstacle === o);
+  }
+  function drawObstacle(o, hot, preview) {
+    const poly = RW.obstaclePoly(o);
+    ctx.beginPath();
+    poly.forEach(([x, y], i) => { const [sx, sy] = toScreen(x, y); i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+    ctx.closePath();
+    ctx.globalAlpha = preview ? 0.5 : 1;
+    ctx.fillStyle = COLORS.rock; ctx.fill();
+    ctx.strokeStyle = hot ? COLORS.hover : COLORS.rockEdge; ctx.lineWidth = hot ? 3 : 1.5; ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   function drawFlag(fx, gy) {
@@ -632,6 +766,11 @@
     servo: 'Click a joint (where two or more sticks meet) to put a servo there. The brain moves servos to make the robot go.',
     weld: 'Click a joint to weld it solid, so those sticks can’t bend there.',
     accel: 'Click a stick to fit an accelerometer. It feels gravity and bumps, so the brain knows which way is down.',
+    block: 'Drag along the track to make a block: sideways for width, up for height.',
+    ramp: 'Drag from the bottom of the slope to its top.',
+    bump: 'Drag along the track to make a rounded bump: sideways for width, up for height.',
+    cmove: 'Drag an obstacle to slide it along the track.',
+    cerase: 'Click an obstacle to remove it.',
     head: 'Click a point to put the head there. The robot must keep its head level and off the ground: it starts out level the way you build it.',
     move: 'Drag a point to move it. Drop it on another point to join them.',
     erase: 'Click a point or stick to remove it.',
@@ -642,6 +781,9 @@
     $$('#panel section').forEach(s => (s.hidden = s.dataset.for !== S.mode));
     $$('.tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool));
     $('#hint').textContent = HINTS[S.tool];
+    $$('.ctools button').forEach(b => b.classList.toggle('on', b.dataset.ctool === S.ctool));
+    $('#chint').textContent = HINTS[S.ctool === 'erase' ? 'cerase' : S.ctool];
+    $('#cparts').textContent = `${S.course.obstacles.length} obstacle${S.course.obstacles.length === 1 ? '' : 's'}`;
     const info = RW.analyse(S.design);
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
     $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? '1 head' : 'no head yet'}`;
@@ -667,19 +809,27 @@
 
   function setMode(m) {
     if (m === S.mode) return;
-    if (m !== 'build') {
+    if (m === 'train' || m === 'watch') {
       const why = canTrain();
       if (why) { toast(why); return; }
     }
     if (S.mode === 'train') S.running = false;
     S.mode = m;
     if (m === 'watch') startWatch();
-    if (m === 'train') { ensureTrainer(); S.cam.x = S.trainer ? S.trainer.agents[0].robot.startX + 1 : 1; }
+    if (m === 'train') { ensureTrainer(); S.cam.x = 1; }
     updateUI();
   }
 
   $$('#modes button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
   $$('.tools button').forEach(b => b.addEventListener('click', () => { S.tool = b.dataset.tool; updateUI(); }));
+  $$('.ctools button').forEach(b => b.addEventListener('click', () => { S.ctool = b.dataset.ctool; updateUI(); }));
+  for (const [key, c] of Object.entries(RW.COURSES)) {
+    const b = document.createElement('button'); b.textContent = c.name;
+    b.addEventListener('click', () => { S.course = c.course(); courseChanged(); toast(`${c.name} course loaded`); });
+    $('#courses').appendChild(b);
+  }
+  $('#cscroll').addEventListener('input', e => { S.courseX = (+e.target.value / 1000) * (RW.COURSE_END + 2) - 1; });
+  $('#cclear').addEventListener('click', () => { S.course = { obstacles: [] }; courseChanged(); });
   const presets = $('#presets');
   for (const [key, p] of Object.entries(RW.PRESETS)) {
     const b = document.createElement('button'); b.textContent = p.name;

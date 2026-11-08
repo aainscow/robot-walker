@@ -36,4 +36,16 @@
         [[0, 1, true], [1, 2], [2, 3], [0, 4]], 4),
     },
   };
+
+  // Ready-made courses. Obstacles: [type, x, w, h, dir].
+  function course(list) {
+    return { obstacles: list.map(([type, x, w, h, dir], i) => ({ id: i + 1, type, x, w, h, dir: dir || 1 })) };
+  }
+  RW.COURSES = {
+    flat: { name: 'Flat', course: () => course([]) },
+    bumps: { name: 'Bumpy', course: () => course([['bump', 4, 1.2, 0.12], ['bump', 7.5, 1.6, 0.2], ['bump', 11, 1, 0.15], ['bump', 14, 2, 0.25], ['bump', 17.5, 1.2, 0.18]]) },
+    hurdles: { name: 'Hurdles', course: () => course([['block', 5, 0.15, 0.1], ['block', 9, 0.15, 0.15], ['block', 13, 0.15, 0.2], ['block', 17, 0.15, 0.25]]) },
+    stairs: { name: 'Stairs', course: () => course([['block', 5, 6, 0.1], ['block', 6, 4, 0.2], ['block', 7, 2, 0.3], ['ramp', 11, 1.5, 0.1, -1]]) },
+    hill: { name: 'Hill', course: () => course([['ramp', 5, 3, 0.5, 1], ['block', 8, 3, 0.5], ['ramp', 11, 3, 0.5, -1]]) },
+  };
 })(window.RW = window.RW || {});

@@ -11,8 +11,9 @@
   <h1>🤖 Robot Walker</h1>
   <nav id="modes">
     <button data-mode="build" class="on">1 · Build</button>
-    <button data-mode="train">2 · Train</button>
-    <button data-mode="watch">3 · Watch best</button>
+    <button data-mode="course">2 · Course</button>
+    <button data-mode="train">3 · Train</button>
+    <button data-mode="watch">4 · Watch best</button>
   </nav>
 </header>
 <main>
@@ -34,6 +35,24 @@
       <div id="presets" class="presets"></div>
       <button id="clear" class="ghost">Clear everything</button>
       <label class="row">Servo strength <input id="strength" type="range" min="0.5" max="2.5" step="0.1" value="1"><output id="strengthOut">1.0×</output></label>
+    </section>
+
+    <section data-for="course" hidden>
+      <h2>Obstacles</h2>
+      <div class="tools ctools">
+        <button data-ctool="block"><span class="ic">▬</span>Block</button>
+        <button data-ctool="ramp"><span class="ic">◢</span>Ramp</button>
+        <button data-ctool="bump"><span class="ic">◠</span>Bump</button>
+        <button data-ctool="cmove"><span class="ic">↔</span>Move</button>
+        <button data-ctool="erase"><span class="ic">✕</span>Erase</button>
+      </div>
+      <label class="row">Scroll the track <input id="cscroll" type="range" min="0" max="1000" value="0"></label>
+      <p id="chint" class="hint"></p>
+      <p id="cparts" class="parts"></p>
+      <h2>Start from</h2>
+      <div id="courses" class="presets"></div>
+      <button id="cclear" class="ghost">Clear the course</button>
+      <p class="hint">Changing the course keeps the robot’s brain, so you can teach it on flat ground first and then make things harder.</p>
     </section>
 
     <section data-for="train" hidden>

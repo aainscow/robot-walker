@@ -17,16 +17,35 @@
   RW.SERVO_RANGE = 1.0;      // +/- radians from the built pose (~57 degrees)
   RW.SERVO_MAX_SPEED = 7;    // rad/s
 
-  // The world: flat ground for now. Obstacles go in `level.obstacles` later.
-  RW.makeWorld = function (level) {
+  RW.START_ZONE = 2.5;       // obstacles can't go before this (the robot starts here)
+  RW.COURSE_END = RW.FINISH + 3;
+
+  // A course is { obstacles: [{id, type, x, w, h, dir}] }, all sitting on the ground:
+  //   block: a box from x to x+w, h tall
+  //   ramp:  a slope over x..x+w rising to h (dir 1 = up to the right, -1 = down)
+  //   bump:  a rounded hill x..x+w, h tall
+  RW.obstaclePoly = function (o) {
+    const { x, w, h } = o;
+    if (o.type === 'ramp') return o.dir < 0 ? [[x, 0], [x + w, 0], [x, h]] : [[x, 0], [x + w, 0], [x + w, h]];
+    if (o.type === 'bump') {
+      const pts = [];
+      for (let i = 0; i <= 8; i++) { const a = Math.PI * (1 - i / 8); pts.push([x + w / 2 + Math.cos(a) * w / 2, Math.sin(a) * h]); }
+      return pts;
+    }
+    return [[x, 0], [x + w, 0], [x + w, h], [x, h]];
+  };
+
+  // The world: ground, end walls, and the course's obstacles.
+  RW.makeWorld = function (course) {
     const world = new pl.World({ gravity: new pl.Vec2(0, -RW.GRAVITY) });
     const ground = world.createBody();
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(RW.FINISH + 40, 0)), { friction: 1.0 });
     // Walls so nothing falls off the ends of the world
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(-20, 30)), {});
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(RW.FINISH + 40, 0), new pl.Vec2(RW.FINISH + 40, 30)), {});
-    for (const ob of (level && level.obstacles) || []) {
-      ground.createFixture(new pl.PolygonShape(ob.map(p => new pl.Vec2(p[0], p[1]))), { friction: 1.0 });
+    for (const ob of (course && course.obstacles) || []) {
+      const poly = RW.obstaclePoly(ob);
+      ground.createFixture(new pl.PolygonShape(poly.map(p => new pl.Vec2(p[0], p[1]))), { friction: 1.0 });
     }
     return world;
   };
@@ -152,7 +171,7 @@
   //   rules.level: 0 = don't care, higher = stricter about keeping the head level
   class Run {
     constructor(design, brain, opts) {
-      this.world = RW.makeWorld();
+      this.world = RW.makeWorld(opts.course);
       this.robot = RW.buildRobot(this.world, design, opts.strength);
       this.brain = brain;
       this.rules = opts.rules || RW.DEFAULT_RULES;
@@ -163,7 +182,7 @@
     step() {
       RW.stepRobot(this.world, this.robot, this.brain);
       this.ticks++;
-      this.dist = RW.comX(this.robot) - this.robot.startX;
+      this.dist = RW.comX(this.robot); // from the start line at x = 0
       if (!isFinite(this.dist)) { this.dist = 0; this.done = this.fallen = true; return; }
       const hs = RW.headState(this.robot);
       if (hs) {
