@@ -26,6 +26,7 @@ aside h2:first-child { margin-top: 0; }
 .ic-cam { color: #b46cff; }
 .ic-accel { color: var(--accent2); font-weight: 700; }
 .hint { color: var(--muted); font-size: 13px; margin: 10px 0; }
+.warn { font-size: 13px; color: #ffb3c7; background: rgba(214,51,108,.15); border: 1px solid rgba(214,51,108,.5); border-radius: 8px; padding: 8px; margin: 8px 0; }
 .parts { font-size: 13px; margin: 6px 0; }
 .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .presets button, .ghost, .big, .seg button { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; cursor: pointer; }

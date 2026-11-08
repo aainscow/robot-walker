@@ -15,6 +15,8 @@ folder: `python3 -m http.server 8107`.
    from 20° above to 60° below the head's forward direction, each measuring the
    distance (up to 3 m) to the ground or an obstacle, 20 times a second. The
    brain gets those distances as extra inputs.
+   A servo whose sticks are braced into a rigid shape (a triangle) can't bend,
+   so the editor test-swings every servo and rings any that can't move in red.
    Or start from a preset.
 2. **Course**: drag on the track to add blocks, ramps (drag from the foot to
    the top) and bumps; Move slides one along, Erase removes it. The green start

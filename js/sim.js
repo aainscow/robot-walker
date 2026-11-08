@@ -210,6 +210,31 @@
   RW.Run = Run;
   RW.DEFAULT_RULES = { fall: true, level: 2 };
 
+  // Which servos can't actually move? A servo whose sticks are braced into a
+  // rigid shape (a triangle, say) is locked solid by the other sticks. Test it
+  // the honest way: in a weightless world with nothing to touch, try to swing
+  // each servo on its own and see whether it moves.
+  RW.findLockedServos = function (design) {
+    const locked = [];
+    const n = RW.analyse(design).servos;
+    for (let k = 0; k < n; k++) {
+      const world = new pl.World({ gravity: new pl.Vec2(0, 0) });
+      const robot = RW.buildRobot(world, design, 1);
+      let lo = 0, hi = 0;
+      for (let i = 0; i < 90; i++) {
+        robot.servos.forEach((s, j) => {
+          const target = j === k ? (i < 45 ? 0.6 : -0.6) : 0;
+          s.joint.setMotorSpeed(Math.max(-RW.SERVO_MAX_SPEED, Math.min(RW.SERVO_MAX_SPEED, 12 * (target - s.joint.getJointAngle()))));
+        });
+        world.step(RW.DT, 8, 3);
+        const a = robot.servos[k].joint.getJointAngle();
+        lo = Math.min(lo, a); hi = Math.max(hi, a);
+      }
+      if (hi - lo < 0.15) locked.push({ index: k, pointId: robot.servos[k].pointId });
+    }
+    return locked;
+  };
+
   RW.comX = function (robot) {
     let sx = 0, sm = 0;
     for (const s of robot.sticks) { const m = s.body.getMass(); sx += s.body.getWorldCenter().x * m; sm += m; }

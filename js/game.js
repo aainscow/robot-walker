@@ -56,15 +56,26 @@
     fitBuildCamera();
     forget();
   }
+  // Servos that the shape of the robot holds rigid (see RW.findLockedServos).
+  let lockedKey = null;
+  function updateLocked() {
+    const key = JSON.stringify(S.design);
+    if (key === lockedKey) return;
+    lockedKey = key;
+    const before = S.locked ? S.locked.length : 0;
+    try { S.locked = RW.findLockedServos(S.design); } catch (e) { S.locked = []; }
+    S.newLock = S.locked.length > before;
+    if (S.newLock) toast('A servo can’t move: the sticks around it are braced into a rigid triangle. It’s marked in red.');
+  }
   function forget() {
     S.trainer = null; S.running = false; S.bestEver = null; S.history = []; S.watch = null;
-    save(); updateUI();
+    save(); updateLocked(); updateUI();
   }
   // Any change to the robot means the old brain no longer fits it.
   function designChanged() {
     const had = S.bestEver || (S.trainer && S.trainer.generation > 0);
     forget();
-    if (had) toast('Robot changed, so its brain starts again from scratch');
+    if (had && !S.newLock) toast('Robot changed, so its brain starts again from scratch');
   }
 
   // ---------- canvas / camera ----------
@@ -641,7 +652,15 @@
     for (const p of d.points) {
       const [x, y] = toScreen(p.x, p.y);
       const n = stickCount(p.id);
-      if (p.kind === 'servo' && n >= 2) drawServo(x, y, r, 0);
+      if (p.kind === 'servo' && n >= 2) {
+        drawServo(x, y, r, 0);
+        if (S.locked && S.locked.some(l => l.pointId === p.id)) {
+          ctx.strokeStyle = COLORS.fell; ctx.lineWidth = 3; ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle = COLORS.fell; ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'left';
+          ctx.fillText('can’t move', x + r * 1.9, y - r);
+        }
+      }
       else if (p.kind === 'weld' && n >= 2) drawWeld(x, y, r);
       else if (n >= 2) drawHinge(x, y, r);
       else { ctx.fillStyle = COLORS.stick; ctx.beginPath(); ctx.arc(x, y, w / 2 + 1, 0, 7); ctx.fill(); }
@@ -842,6 +861,9 @@
     $('#cparts').textContent = `${S.course.obstacles.length} obstacle${S.course.obstacles.length === 1 ? '' : 's'}`;
     const info = RW.analyse(S.design);
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    const nLocked = (S.locked || []).length;
+    $('#locked').hidden = !nLocked;
+    $('#locked').textContent = nLocked ? `${nLocked} servo channel${nLocked === 1 ? '' : 's'} can’t move: the sticks around ${nLocked === 1 ? 'it are' : 'them are'} braced into a rigid shape, so the joint can’t bend. Remove a brace stick, or move the servo to a joint that isn’t part of a triangle.` : '';
     $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? (S.design.camera ? '1 head with camera' : '1 head') : 'no head yet'}`;
     const run = $('#run');
     run.textContent = S.running ? '❚❚ Pause' : (S.history.length ? '▶ Keep learning' : '▶ Start learning');
@@ -928,6 +950,7 @@
   resize();
   if (!load()) S.design = RW.PRESETS.dog.design();
   S.nextId = 1 + Math.max(0, ...S.design.points.map(p => p.id), ...S.design.sticks.map(s => s.id));
+  updateLocked();
   updateUI();
   requestAnimationFrame(frame);
   window.__RW_STATE = S; // handy for poking at from the console
