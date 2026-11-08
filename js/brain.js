@@ -16,7 +16,7 @@
 
   RW.genomeLength = function (info) {
     const nIn = RW.inputCount(info);
-    return 1 + HIDDEN * nIn + info.servos * (HIDDEN + 1);
+    return 1 + HIDDEN * nIn + info.servos * (HIDDEN + 1) + info.servos; // + one stiffness gene per servo
   };
 
   RW.randomGenome = function (info) {
@@ -34,6 +34,10 @@
       this.inBuf = new Float32Array(this.nIn);
       this.h = new Float32Array(HIDDEN);
       this.out = new Float32Array(this.nOut);
+      // The last genes set each servo's stiffness (how hard it holds its target).
+      const g0 = genome.length - this.nOut;
+      this.gain = new Float32Array(this.nOut);
+      for (let i = 0; i < this.nOut; i++) this.gain[i] = RW.GAIN_MIN + (RW.GAIN_MAX - RW.GAIN_MIN) / (1 + Math.exp(-genome[g0 + i]));
     }
     forward(x) {
       const g = this.g, nIn = this.nIn;

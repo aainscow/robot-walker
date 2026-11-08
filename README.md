@@ -9,7 +9,11 @@ folder: `python3 -m http.server 8107`.
 ## How it plays
 
 1. **Build**: drag to draw sticks. Where sticks meet is a free hinge; click it
-   with the Servo tool to motorise it, or Weld to make it rigid. Click a stick
+   with the Servo tool to motorise it, or Weld to make it rigid. A servo swings
+   ±90° from how you built it; click it again for ±135°, ±180°, then continuous
+   rotation (it spins all the way round and the brain sets its speed), then
+   once more to remove it. Each servo's stiffness (how hard it holds its
+   target) is learned along with the brain. Click a stick
    with the Accelerometer tool to fit a sensor, and put the **Head** on a point.
    The **Camera** tool fits a time-of-flight camera to the head: 9 rays fanned
    from 20° above to 60° below the head's forward direction, each measuring the

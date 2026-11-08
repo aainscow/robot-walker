@@ -14,8 +14,17 @@
   RW.STICK_R = 0.04;         // half thickness of a stick
   RW.FOOT_R = 0.05;          // round ends so sticks roll over the ground
   RW.HEAD_R = 0.13;          // radius of the head
-  RW.SERVO_RANGE = 1.0;      // +/- radians from the built pose (~57 degrees)
-  RW.SERVO_MAX_SPEED = 7;    // rad/s
+  // Each servo has its own range, in degrees either way from the pose it was
+  // built in. 360 means continuous rotation: a motor that can spin all the way
+  // round, where the brain sets its speed instead of an angle.
+  RW.SERVO_RANGES = [90, 135, 180, 360];
+  RW.SERVO_DEFAULT_RANGE = 90;
+  RW.servoRangeDeg = p => p.range || RW.SERVO_DEFAULT_RANGE;
+  RW.isContinuous = p => RW.servoRangeDeg(p) >= 360;
+  RW.SERVO_MAX_SPEED = 10;   // rad/s, about a hobby servo's 60 degrees in 0.1 s
+  RW.SERVO_TORQUE = 0.6;     // torque per (kg x g x metre of robot size)
+  RW.SERVO_GAIN = 12;        // how hard a servo corrects its error (1/s) unless the brain sets it
+  RW.GAIN_MIN = 4; RW.GAIN_MAX = 40; // range of stiffness the brain can learn
   // Time-of-flight camera on the head: a fan of distance-measuring rays.
   RW.CAM_RAYS = 9;
   RW.CAM_RANGE = 3;          // metres
@@ -126,7 +135,7 @@
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of pts.values()) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
     const size = Math.max(0.3, Math.max(maxX - minX, maxY - minY));
-    const torque = 0.6 * robot.mass * RW.GRAVITY * size * (strength || 1);
+    const torque = RW.SERVO_TORQUE * robot.mass * RW.GRAVITY * size * (strength || 1);
 
     const ps = RW.pointSticks(design);
     for (const p of design.points) {
@@ -139,11 +148,12 @@
         if (p.kind === 'weld') {
           robot.welds.push({ joint: world.createJoint(new pl.WeldJoint({ frequencyHz: 0, dampingRatio: 0 }, base, other, anchor)) });
         } else if (p.kind === 'servo') {
+          const continuous = RW.isContinuous(p), range = RW.servoRangeDeg(p) * Math.PI / 180;
           const j = world.createJoint(new pl.RevoluteJoint({
             enableMotor: true, maxMotorTorque: torque, motorSpeed: 0,
-            enableLimit: true, lowerAngle: -RW.SERVO_RANGE, upperAngle: RW.SERVO_RANGE,
+            enableLimit: !continuous, lowerAngle: -range, upperAngle: range,
           }, base, other, anchor));
-          robot.servos.push({ joint: j, target: 0, pointId: p.id });
+          robot.servos.push({ joint: j, target: 0, pointId: p.id, range, continuous });
         } else {
           // free hinge, with a little friction so it doesn't flop forever
           const j = world.createJoint(new pl.RevoluteJoint({ enableMotor: true, maxMotorTorque: torque * 0.02, motorSpeed: 0 }, base, other, anchor));
@@ -290,7 +300,7 @@
     out[k++] = 1;
     out[k++] = Math.sin(phase); out[k++] = Math.cos(phase);
     out[k++] = Math.sin(2 * phase); out[k++] = Math.cos(2 * phase);
-    for (const s of robot.servos) out[k++] = s.joint.getJointAngle() / RW.SERVO_RANGE;
+    for (const s of robot.servos) out[k++] = s.continuous ? Math.sin(s.joint.getJointAngle()) : s.joint.getJointAngle() / s.range;
     for (const a of robot.accels) {
       out[k++] = Math.max(-2, Math.min(2, a.f.x / RW.GRAVITY));
       out[k++] = Math.max(-2, Math.min(2, a.f.y / RW.GRAVITY));
@@ -308,9 +318,17 @@
     const outs = brain.forward(gatherInputs(robot, phase, brain.inBuf));
     for (let i = 0; i < robot.servos.length; i++) {
       const s = robot.servos[i];
-      s.target = outs[i] * RW.SERVO_RANGE;
+      if (s.continuous) {
+        // continuous rotation: the brain chooses how fast (and which way) to spin
+        s.target = null;
+        s.joint.setMotorSpeed(outs[i] * RW.SERVO_MAX_SPEED);
+        continue;
+      }
+      s.target = outs[i] * s.range;
       const err = s.target - s.joint.getJointAngle();
-      s.joint.setMotorSpeed(Math.max(-RW.SERVO_MAX_SPEED, Math.min(RW.SERVO_MAX_SPEED, 12 * err)));
+      // stiffness: how hard this servo pushes back towards its target, learned per servo
+      const gain = brain.gain ? brain.gain[i] : RW.SERVO_GAIN;
+      s.joint.setMotorSpeed(Math.max(-RW.SERVO_MAX_SPEED, Math.min(RW.SERVO_MAX_SPEED, gain * err)));
     }
     world.step(RW.DT, 8, 3);
     robot.t += RW.DT;

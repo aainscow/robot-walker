@@ -29,6 +29,17 @@
         [[0.5, 0.9, 'servo'], [0.5, 1.5], [0.38, 0.47, 'servo'], [0.38, 0], [0.62, 0.47, 'servo'], [0.62, 0]],
         [[0, 1, true], [0, 2], [2, 3], [0, 4], [4, 5]], 1),
     },
+    spinner: {
+      name: 'Spinner (wheel legs)',
+      // two legs on continuous-rotation servos that can spin all the way round
+      design: () => {
+        const d = make(
+          [[0.3, 0.45, 'servo'], [1.2, 0.45, 'servo'], [0.3, 0.05], [1.2, 0.05], [0.75, 0.45, 'weld'], [0.9, 1.0]],
+          [[0, 4, true], [4, 1], [0, 2], [1, 3], [4, 5]], 5);
+        d.points[0].range = 360; d.points[1].range = 360;
+        return d;
+      },
+    },
     crawler: {
       name: 'Crawler (one arm)',
       design: () => make(

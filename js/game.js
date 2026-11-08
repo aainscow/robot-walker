@@ -45,6 +45,8 @@
       S.design = d.design; S.opts = { ...S.opts, ...d.opts, rules: { ...S.opts.rules, ...(d.opts && d.opts.rules) } };
       if (d.bestEver) S.bestEver = { ...d.bestEver, genome: Float32Array.from(d.bestEver.genome) };
       S.history = d.history || [];
+      // a brain saved by an older version may not fit the robot's brain any more
+      if (S.bestEver && S.bestEver.genome.length !== RW.genomeLength(RW.analyse(S.design))) { S.bestEver = null; S.history = []; }
       if (d.course && Array.isArray(d.course.obstacles)) S.course = d.course;
       return true;
     } catch (e) { return false; }
@@ -163,7 +165,16 @@
       const p = hitPoint(sx, sy);
       if (!p) return;
       if (stickCount(p.id) < 2) { toast(`A ${t === 'servo' ? 'servo' : 'weld'} goes where two or more sticks meet`); return; }
-      p.kind = p.kind === t ? 'free' : t;
+      if (t === 'servo' && p.kind === 'servo') {
+        // clicking a servo again steps through its ranges, then removes it
+        const i = RW.SERVO_RANGES.indexOf(RW.servoRangeDeg(p));
+        if (i >= 0 && i < RW.SERVO_RANGES.length - 1) p.range = RW.SERVO_RANGES[i + 1];
+        else { p.kind = 'free'; delete p.range; }
+        toast(p.kind === 'servo' ? `Servo: ${rangeLabel(p)}` : 'Servo removed');
+      } else {
+        p.kind = p.kind === t ? 'free' : t;
+        delete p.range;
+      }
       designChanged();
     } else if (t === 'camera') {
       if (!pointById(S.design.head)) { toast('Give the robot a head first: the camera goes on the head'); return; }
@@ -241,6 +252,8 @@
       designChanged();
     }
   });
+
+  const rangeLabel = p => RW.isContinuous(p) ? '↻ spins all the way round' : `±${RW.servoRangeDeg(p)}°`;
 
   // ---------- course editor ----------
   function clampCourseX(x) {
@@ -557,7 +570,7 @@
     ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
   }
-  function drawServo(x, y, r, target) {
+  function drawServo(x, y, r, target, continuous) {
     ctx.fillStyle = COLORS.servo; ctx.strokeStyle = '#7a4d00'; ctx.lineWidth = 1.5;
     ctx.beginPath();
     const teeth = 8;
@@ -568,6 +581,15 @@
     }
     ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#7a4d00'; ctx.beginPath(); ctx.arc(x, y, r * 0.35, 0, 7); ctx.fill();
+    if (continuous) {
+      // a ring with an arrowhead: this one can spin all the way round
+      ctx.strokeStyle = '#7a4d00'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, r * 1.6, -2.6 + (target || 0), 1.9 + (target || 0)); ctx.stroke();
+      const a = 1.9 + (target || 0), ax = x + Math.cos(a) * r * 1.6, ay = y + Math.sin(a) * r * 1.6;
+      ctx.fillStyle = '#7a4d00'; ctx.beginPath();
+      ctx.moveTo(ax + Math.cos(a + 1.57) * 5, ay + Math.sin(a + 1.57) * 5);
+      ctx.lineTo(ax + Math.cos(a) * 4, ay + Math.sin(a) * 4); ctx.lineTo(ax - Math.cos(a) * 4, ay - Math.sin(a) * 4); ctx.fill();
+    }
   }
   function drawHinge(x, y, r) {
     ctx.fillStyle = COLORS.hinge; ctx.strokeStyle = COLORS.stick; ctx.lineWidth = 2;
@@ -653,7 +675,9 @@
       const [x, y] = toScreen(p.x, p.y);
       const n = stickCount(p.id);
       if (p.kind === 'servo' && n >= 2) {
-        drawServo(x, y, r, 0);
+        drawServo(x, y, r, 0, RW.isContinuous(p));
+        ctx.fillStyle = '#7a4d00'; ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'right';
+        ctx.fillText(RW.isContinuous(p) ? '↻' : `±${RW.servoRangeDeg(p)}°`, x - r * 1.4, y + r * 1.9);
         if (S.locked && S.locked.some(l => l.pointId === p.id)) {
           ctx.strokeStyle = COLORS.fell; ctx.lineWidth = 3; ctx.setLineDash([4, 3]);
           ctx.beginPath(); ctx.arc(x, y, r * 1.7, 0, 7); ctx.stroke(); ctx.setLineDash([]);
@@ -704,7 +728,7 @@
       }
       for (const h of robot.hinges) { const p = h.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawHinge(x, y, r); }
       for (const h of robot.welds) { const p = h.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawWeld(x, y, r); }
-      for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawServo(x, y, r, -sv.joint.getJointAngle()); }
+      for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawServo(x, y, r, -sv.joint.getJointAngle(), sv.continuous); }
     } else {
       // faint ghosts: skip the detail
       ctx.fillStyle = COLORS.servo;
@@ -837,7 +861,7 @@
 
   const HINTS = {
     stick: 'Drag from one point to another to place a stick. Start or end on an existing point to join them; where sticks meet is a free hinge.',
-    servo: 'Click a joint (where two or more sticks meet) to put a servo there. The brain moves servos to make the robot go.',
+    servo: 'Click a joint (where two or more sticks meet) to put a servo there; it can swing ±90° from how you built it. Click it again for ±135°, ±180°, then continuous rotation (spins all the way round, like a wheel motor), then to remove it.',
     weld: 'Click a joint to weld it solid, so those sticks can’t bend there.',
     accel: 'Click a stick to fit an accelerometer. It feels gravity and bumps, so the brain knows which way is down.',
     block: 'Drag along the track to make a block: sideways for width, up for height.',
