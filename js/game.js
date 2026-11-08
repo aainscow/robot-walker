@@ -140,7 +140,7 @@
   }
   function hoverTarget(sx, sy) {
     const t = S.tool;
-    if (t === 'stick' || t === 'move' || t === 'servo' || t === 'weld' || t === 'head') { const p = hitPoint(sx, sy); return p && { point: p }; }
+    if (t === 'stick' || t === 'move' || t === 'servo' || t === 'weld' || t === 'head' || t === 'foot') { const p = hitPoint(sx, sy); return p && { point: p }; }
     if (t === 'accel') { const s = hitStick(sx, sy); return s && { stick: s }; }
     if (t === 'erase') { const p = hitPoint(sx, sy); if (p) return { point: p }; const s = hitStick(sx, sy); return s && { stick: s }; }
     return null;
@@ -175,6 +175,11 @@
         p.kind = p.kind === t ? 'free' : t;
         delete p.range;
       }
+      designChanged();
+    } else if (t === 'foot') {
+      const p = hitPoint(sx, sy);
+      if (!p) return;
+      p.foot = !p.foot;
       designChanged();
     } else if (t === 'camera') {
       if (!pointById(S.design.head)) { toast('Give the robot a head first: the camera goes on the head'); return; }
@@ -368,6 +373,7 @@
     S.design.sticks = S.design.sticks.filter(s => s.a !== s.b);
     S.design.points = S.design.points.filter(q => q !== p);
     if (S.design.head === p.id) S.design.head = other.id;
+    if (p.foot) other.foot = true;
   }
 
   // ---------- training ----------
@@ -665,6 +671,13 @@
       if (h.hit) { ctx.fillStyle = COLORS.cam; ctx.beginPath(); ctx.arc(x1, y1, 3, 0, 7); ctx.fill(); }
     }
   }
+  // A rubber foot: a dark grippy ball with a tread ring.
+  function drawFoot(x, y, rad) {
+    rad = Math.max(4, rad);
+    ctx.fillStyle = '#26221f'; ctx.beginPath(); ctx.arc(x, y, rad, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#5a524b'; ctx.lineWidth = Math.max(1, rad * 0.18);
+    ctx.beginPath(); ctx.arc(x, y, rad * 0.62, 0, 7); ctx.stroke();
+  }
   const jointR = () => Math.max(6, Math.min(12, S.cam.s * 0.07));
 
   function drawDesign() {
@@ -680,6 +693,7 @@
       const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y);
       drawAccel((ax + bx) / 2, (ay + by) / 2, Math.atan2(b.y - a.y, b.x - a.x), r);
     }
+    for (const p of d.points) if (p.foot) { const [x, y] = toScreen(p.x, p.y); drawFoot(x, y, RW.RUBBER_R * S.cam.s); }
     for (const p of d.points) {
       const [x, y] = toScreen(p.x, p.y);
       const n = stickCount(p.id);
@@ -729,6 +743,10 @@
       const b = st.body, p = b.getPosition(), a = b.getAngle(), c = Math.cos(a), s = Math.sin(a);
       const [ax, ay] = toScreen(p.x - c * st.half, p.y - s * st.half), [bx, by] = toScreen(p.x + c * st.half, p.y + s * st.half);
       drawSegment(ax, ay, bx, by, col, w);
+    }
+    for (const f of robot.feet || []) {
+      const p = f.body.getWorldPoint(f.local), [x, y] = toScreen(p.x, p.y);
+      drawFoot(x, y, RW.RUBBER_R * S.cam.s);
     }
     if (o.lead || o.alpha > 0.3) {
       for (const st of robot.sticks) if (st.accel) {
@@ -881,6 +899,7 @@
     bump: 'Drag along the track to make a rounded bump: sideways for width, up for height.',
     cmove: 'Drag an obstacle to slide it along the track.',
     cerase: 'Click an obstacle to remove it.',
+    foot: 'Click a point to fit a rubber foot. Bare sticks are hard plastic and slide on the ground; rubber feet grip (and bounce a little). Put them where the robot touches the ground.',
     camera: 'Click anywhere to fit or remove a time-of-flight camera on the head. It measures the distance along 9 rays ahead, so the robot can see the ground and obstacles coming.',
     head: 'Click a point to put the head there. The robot must keep its head level and off the ground: it starts out level the way you build it.',
     move: 'Drag a point to move it. Drop it on another point to join them.',
@@ -900,7 +919,7 @@
     const nLocked = (S.locked || []).length;
     $('#locked').hidden = !nLocked;
     $('#locked').textContent = nLocked ? `${nLocked} servo channel${nLocked === 1 ? '' : 's'} can’t move: the sticks around ${nLocked === 1 ? 'it are' : 'them are'} braced into a rigid shape, so the joint can’t bend. Remove a brace stick, or move the servo to a joint that isn’t part of a triangle.` : '';
-    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? (S.design.camera ? '1 head with camera' : '1 head') : 'no head yet'}`;
+    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${plural(S.design.points.filter(p => p.foot).length, 'rubber foot').replace('foots', 'feet')} · ${pointById(S.design.head) ? (S.design.camera ? '1 head with camera' : '1 head') : 'no head yet'}`;
     const run = $('#run');
     run.textContent = S.running ? '❚❚ Pause' : (S.history.length ? '▶ Keep learning' : '▶ Start learning');
     run.classList.toggle('pause', S.running);

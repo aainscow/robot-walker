@@ -19,6 +19,10 @@ folder: `python3 -m http.server 8107`.
    from 20° above to 60° below the head's forward direction, each measuring the
    distance (up to 3 m) to the ground or an obstacle, 20 times a second. The
    brain gets those distances as extra inputs.
+   The **Foot** tool fits a rubber foot to a point. Bare sticks are hard
+   plastic and slide (friction 0.4); rubber feet grip (2.0) and bounce a
+   little. On a 35° slope the presets slide 3-4 m without feet and not at all
+   with them.
    A servo whose sticks are braced into a rigid shape (a triangle) can't bend,
    so the editor test-swings every servo and rings any that can't move in red.
    Or start from a preset.

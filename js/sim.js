@@ -13,6 +13,11 @@
   RW.FINISH = 20;            // metres to the finish line
   RW.STICK_R = 0.04;         // half thickness of a stick
   RW.FOOT_R = 0.05;          // round ends so sticks roll over the ground
+  // Bare sticks are hard plastic and slide; rubber feet grip (and bounce a little).
+  RW.STICK_FRICTION = 0.4;
+  RW.RUBBER_R = 0.07;        // radius of a rubber foot
+  RW.RUBBER_FRICTION = 2.0;
+  RW.RUBBER_BOUNCE = 0.15;
   RW.HEAD_R = 0.13;          // radius of the head
   // Each servo has its own range, in degrees either way from the pose it was
   // built in. 360 means continuous rotation: a motor that can spin all the way
@@ -93,7 +98,7 @@
   function placement(design) {
     let minX = Infinity, minY = Infinity;
     for (const p of design.points) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); }
-    return { dx: -minX, dy: RW.FOOT_R + 0.01 - minY };
+    return { dx: -minX, dy: Math.max(RW.FOOT_R, RW.RUBBER_R) + 0.01 - minY };
   }
 
   RW.buildRobot = function (world, design, strength) {
@@ -107,7 +112,7 @@
       const len = Math.hypot(b.x - a.x, b.y - a.y);
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       const body = world.createDynamicBody({ position: new pl.Vec2((a.x + b.x) / 2, (a.y + b.y) / 2), angle: ang, angularDamping: 0.5 });
-      const fd = { density: 4, friction: 1.0, filterGroupIndex: -1 }; // -1: a robot never collides with itself
+      const fd = { density: 4, friction: RW.STICK_FRICTION, filterGroupIndex: -1 }; // -1: a robot never collides with itself
       body.createFixture(new pl.BoxShape(len / 2, RW.STICK_R), fd);
       body.createFixture(new pl.CircleShape(new pl.Vec2(-len / 2, 0), RW.FOOT_R), fd);
       body.createFixture(new pl.CircleShape(new pl.Vec2(len / 2, 0), RW.FOOT_R), fd);
@@ -116,6 +121,20 @@
       robot.sticks.push(st);
       bodyOf.set(s.id, body);
       if (s.accel) robot.accels.push({ body, pv: null, f: { x: 0, y: RW.GRAVITY }, raw: { x: 0, y: RW.GRAVITY } });
+    }
+
+    // Rubber feet: a grippy ball on the end of the first stick at each foot point.
+    robot.feet = [];
+    for (const p of design.points) {
+      if (!p.foot) continue;
+      const stick = design.sticks.find(s => s.a === p.id || s.b === p.id);
+      if (!stick) continue;
+      const body = bodyOf.get(stick.id), P = pts.get(p.id);
+      const local = body.getLocalPoint(new pl.Vec2(P.x, P.y));
+      const fixture = body.createFixture(new pl.CircleShape(local, RW.RUBBER_R),
+        { density: 3, friction: RW.RUBBER_FRICTION, restitution: RW.RUBBER_BOUNCE, filterGroupIndex: -1 });
+      robot.mass += fixture.getDensity() * Math.PI * RW.RUBBER_R * RW.RUBBER_R;
+      robot.feet.push({ body, local });
     }
 
     // The head: a ball fixed to the end of the first stick at its point. Its
