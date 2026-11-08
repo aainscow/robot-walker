@@ -23,7 +23,7 @@
     opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 } },
     trainer: null, running: false, speed: 4, ghosts: true,
     bestEver: null, history: [],
-    watch: null, wspeed: 1,
+    watch: null, wspeed: 1, wlen: 'train',
     cam: { x: 1, y: 0.9, s: 120 },
     drag: null, hover: null, mouse: null,
   };
@@ -400,8 +400,8 @@
   function startWatch() {
     if (!S.bestEver) { S.watch = null; return; }
     const brain = new RW.Brain(S.bestEver.genome, RW.analyse(S.design));
-    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules, course: S.course });
-    S.watch.result = null; S.watch.hold = 0;
+    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules, course: S.course, keepGoing: S.wlen !== 'train' });
+    S.watch.result = null; S.watch.hold = 0; S.watch.best = 0; S.watch.bestT = 0;
     S.cam.x = 1;
   }
 
@@ -438,8 +438,17 @@
       wacc -= RW.DT;
       w.step();
       if (w.fallen) { w.result = 'fell'; w.hold = 2.5; break; }
-      if (w.finishTime != null) { w.result = 'finish'; w.hold = 3; break; }
-      if (w.robot.t >= S.opts.timeLimit) { w.result = 'time'; w.hold = 2; break; }
+      if (S.wlen === 'train') {
+        // same rules as training: stop at the finish or when time runs out
+        if (w.finishTime != null) { w.result = 'finish'; w.hold = 3; break; }
+        if (w.robot.t >= S.opts.timeLimit) { w.result = 'time'; w.hold = 2; break; }
+        continue;
+      }
+      // long replay: keep going past the finish until time is up, it gets stuck, or the ground runs out
+      if (w.dist > w.best + 0.25) { w.best = w.dist; w.bestT = w.robot.t; }
+      if (w.robot.t - w.bestT > 10) { w.result = 'stuck'; w.hold = 3; break; }
+      if (w.dist >= RW.WORLD_END - 5) { w.result = 'end'; w.hold = 3; break; }
+      if (S.wlen !== 'forever' && w.robot.t >= +S.wlen) { w.result = 'time'; w.hold = 3; break; }
     }
     updateAccelReadout();
   }
@@ -520,7 +529,7 @@
     const sx0 = startX();
     ctx.font = '12px system-ui'; ctx.textAlign = 'center';
     for (let m = Math.floor(x0 - sx0) - 1; m < x1 - sx0 + 1; m++) {
-      if (m < 0 || m > RW.FINISH) continue;
+      if (m < 0 || m > RW.WORLD_END) continue;
       const [mx] = toScreen(sx0 + m, 0);
       ctx.fillStyle = 'rgba(255,255,255,.55)';
       ctx.fillRect(mx - 1, gy + 11, 2, m % 5 === 0 ? 12 : 6);
@@ -776,8 +785,11 @@
       if (!w) html = 'Nothing learned yet, train your robot first';
       else {
         html = `${w.robot.t.toFixed(1)}s · ${Math.max(0, w.dist).toFixed(2)} m · head tilt ${Math.round(w.tilt * 180 / Math.PI)}° · kept level ${Math.round(w.level * 100)}%`;
+        if (w.finishTime != null && S.wlen !== 'train') html += `<br>🏁 crossed the finish at ${w.finishTime.toFixed(1)}s`;
         if (w.result === 'finish') html += `<div class="big-msg">🏁 Made it in ${w.robot.t.toFixed(1)}s!</div>`;
-        if (w.result === 'time') html += `<div class="big-msg">Out of time at ${w.dist.toFixed(1)} m</div>`;
+        if (w.result === 'time') html += `<div class="big-msg">${S.wlen === 'train' ? 'Out of time' : 'Time’s up'} at ${w.dist.toFixed(1)} m</div>`;
+        if (w.result === 'stuck') html += `<div class="big-msg">Stuck at ${w.dist.toFixed(1)} m (no progress for 10 s)</div>`;
+        if (w.result === 'end') html += `<div class="big-msg">Reached the end of the world! ${w.dist.toFixed(0)} m in ${w.robot.t.toFixed(0)}s</div>`;
         if (w.result === 'fell') html += `<div class="big-msg">💥 Fell over at ${Math.max(0, w.dist).toFixed(1)} m</div>`;
       }
     }
@@ -960,6 +972,7 @@
   $('#ghosts').addEventListener('change', e => { S.ghosts = e.target.checked; });
   $('#reset').addEventListener('click', () => { forget(); toast('Brain wiped. Starting from random again.'); });
   $('#replay').addEventListener('click', () => startWatch());
+  $('#wlen').addEventListener('change', e => { S.wlen = e.target.value; startWatch(); });
 
   // Changing population or time limit restarts the generation but keeps the best brain as a seed.
   function restartTrainerKeepingBest() {

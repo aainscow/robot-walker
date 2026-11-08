@@ -35,6 +35,10 @@ folder: `python3 -m http.server 8107`.
    "A bit" or "Strictly"). Level means the angle you built the head at.
 4. **Watch best**: replay the best brain so far in real time, with the
    accelerometer's reading drawn as a green arrow.
+   "Run for" lets the replay carry on past the finish line and the training
+   time limit (30 s, 1 or 3 minutes, or as long as it can) on flat ground
+   that goes on for 500 m. It stops early if the robot falls or makes no
+   progress for 10 s.
 
 The design and the best brain are saved in the browser's localStorage.
 

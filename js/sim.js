@@ -34,6 +34,7 @@
 
   RW.START_ZONE = 2.5;       // obstacles can't go before this (the robot starts here)
   RW.COURSE_END = RW.FINISH + 3;
+  RW.WORLD_END = 500;        // flat ground carries on past the finish, for long replays
 
   // A course is { obstacles: [{id, type, x, w, h, dir}] }, all sitting on the ground:
   //   block: a box from x to x+w, h tall
@@ -54,10 +55,10 @@
   RW.makeWorld = function (course) {
     const world = new pl.World({ gravity: new pl.Vec2(0, -RW.GRAVITY) });
     const ground = world.createBody();
-    ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(RW.FINISH + 40, 0)), { friction: 1.0 });
+    ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(RW.WORLD_END, 0)), { friction: 1.0 });
     // Walls so nothing falls off the ends of the world
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(-20, 30)), {});
-    ground.createFixture(new pl.EdgeShape(new pl.Vec2(RW.FINISH + 40, 0), new pl.Vec2(RW.FINISH + 40, 30)), {});
+    ground.createFixture(new pl.EdgeShape(new pl.Vec2(RW.WORLD_END, 0), new pl.Vec2(RW.WORLD_END, 30)), {});
     for (const ob of (course && course.obstacles) || []) {
       const poly = RW.obstaclePoly(ob);
       ground.createFixture(new pl.PolygonShape(poly.map(p => new pl.Vec2(p[0], p[1]))), { friction: 1.0 });
@@ -194,6 +195,7 @@
       this.robot = RW.buildRobot(this.world, design, opts.strength);
       this.brain = brain;
       this.rules = opts.rules || RW.DEFAULT_RULES;
+      this.keepGoing = !!opts.keepGoing; // carry on past the finish line (long replays)
       this.dist = 0; this.levelSum = 0; this.ticks = 0;
       this.done = false; this.fallen = false; this.finishTime = null; this.tilt = 0;
     }
@@ -210,7 +212,7 @@
         // only a real bump counts: tilting (even upside down) just costs level score
         if (this.rules.fall && hs.touching) { this.done = this.fallen = true; return; }
       } else this.levelSum += 1;
-      if (this.dist >= RW.FINISH) { this.done = true; this.finishTime = this.robot.t; }
+      if (this.dist >= RW.FINISH && this.finishTime == null) { this.finishTime = this.robot.t; if (!this.keepGoing) this.done = true; }
     }
     fitness(timeLimit) {
       let f = this.finishTime != null ? RW.FINISH + 2 * (timeLimit - this.finishTime) : this.dist;
