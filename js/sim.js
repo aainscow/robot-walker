@@ -13,6 +13,7 @@
   RW.FINISH = 20;            // metres to the finish line
   RW.STICK_R = 0.04;         // half thickness of a stick
   RW.FOOT_R = 0.05;          // round ends so sticks roll over the ground
+  RW.HEAD_R = 0.13;          // radius of the head
   RW.SERVO_RANGE = 1.0;      // +/- radians from the built pose (~57 degrees)
   RW.SERVO_MAX_SPEED = 7;    // rad/s
 
@@ -80,6 +81,19 @@
       if (s.accel) robot.accels.push({ body, pv: null, f: { x: 0, y: RW.GRAVITY }, raw: { x: 0, y: RW.GRAVITY } });
     }
 
+    // The head: a ball fixed to the end of the first stick at its point. Its
+    // "level" is however it was built; tilt is measured from that.
+    if (design.head && pts.has(design.head)) {
+      const stick = design.sticks.find(s => s.a === design.head || s.b === design.head);
+      if (stick) {
+        const body = bodyOf.get(stick.id), P = pts.get(design.head);
+        const local = body.getLocalPoint(new pl.Vec2(P.x, P.y));
+        const fixture = body.createFixture(new pl.CircleShape(local, RW.HEAD_R), { density: 1.5, friction: 0.6, filterGroupIndex: -1 });
+        robot.mass += fixture.getDensity() * Math.PI * RW.HEAD_R * RW.HEAD_R;
+        robot.head = { body, local, fixture, angle0: body.getAngle() };
+      }
+    }
+
     // Size of the robot sets how much torque its servos have.
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of pts.values()) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
@@ -112,6 +126,61 @@
     robot.startX = RW.comX(robot);
     return robot;
   };
+
+  // How the head is doing: tilt from its built pose (radians, -pi..pi), and
+  // whether it is touching the ground (which counts as falling over).
+  RW.headState = function (robot) {
+    const h = robot.head;
+    if (!h) return null;
+    let tilt = h.body.getAngle() - h.angle0;
+    tilt = Math.atan2(Math.sin(tilt), Math.cos(tilt));
+    let touching = false;
+    for (let ce = h.body.getContactList(); ce; ce = ce.next) {
+      const c = ce.contact;
+      if (c.isTouching() && (c.getFixtureA() === h.fixture || c.getFixtureB() === h.fixture)) { touching = true; break; }
+    }
+    return { tilt, touching };
+  };
+
+  RW.headPos = function (robot) {
+    return robot.head && robot.head.body.getWorldPoint(robot.head.local);
+  };
+
+  // One attempt by one brain: steps the robot and keeps score.
+  //   rules.fall:  touching the ground with the head (or turning it upside
+  //                down) ends the run and halves the distance
+  //   rules.level: 0 = don't care, higher = stricter about keeping the head level
+  class Run {
+    constructor(design, brain, opts) {
+      this.world = RW.makeWorld();
+      this.robot = RW.buildRobot(this.world, design, opts.strength);
+      this.brain = brain;
+      this.rules = opts.rules || RW.DEFAULT_RULES;
+      this.dist = 0; this.levelSum = 0; this.ticks = 0;
+      this.done = false; this.fallen = false; this.finishTime = null; this.tilt = 0;
+    }
+    get level() { return this.ticks ? this.levelSum / this.ticks : 1; }
+    step() {
+      RW.stepRobot(this.world, this.robot, this.brain);
+      this.ticks++;
+      this.dist = RW.comX(this.robot) - this.robot.startX;
+      if (!isFinite(this.dist)) { this.dist = 0; this.done = this.fallen = true; return; }
+      const hs = RW.headState(this.robot);
+      if (hs) {
+        this.tilt = hs.tilt;
+        this.levelSum += Math.pow(Math.max(0, Math.cos(hs.tilt)), this.rules.level);
+        if (this.rules.fall && (hs.touching || Math.abs(hs.tilt) > Math.PI / 2)) { this.done = this.fallen = true; return; }
+      } else this.levelSum += 1;
+      if (this.dist >= RW.FINISH) { this.done = true; this.finishTime = this.robot.t; }
+    }
+    fitness(timeLimit) {
+      let f = this.finishTime != null ? RW.FINISH + 2 * (timeLimit - this.finishTime) : this.dist;
+      if (this.fallen) f = Math.min(f, this.dist) * 0.5;
+      return f * (f > 0 ? this.level : 1);
+    }
+  }
+  RW.Run = Run;
+  RW.DEFAULT_RULES = { fall: true, level: 2 };
 
   RW.comX = function (robot) {
     let sx = 0, sm = 0;

@@ -24,6 +24,7 @@
         <button data-tool="servo"><span class="ic ic-servo">⚙</span>Servo</button>
         <button data-tool="weld"><span class="ic">■</span>Weld</button>
         <button data-tool="accel"><span class="ic ic-accel">A</span>Accel&shy;erometer</button>
+        <button data-tool="head"><span class="ic">◉</span>Head</button>
         <button data-tool="move"><span class="ic">✥</span>Move</button>
         <button data-tool="erase"><span class="ic">✕</span>Erase</button>
       </div>
@@ -43,12 +44,16 @@
       <div class="stats">
         <div><b id="gen">0</b><span>generation</span></div>
         <div><b id="lead">–</b><span>leader now</span></div>
-        <div><b id="best">–</b><span>best ever</span></div>
-        <div><b id="fin">0</b><span>finished last gen</span></div>
+        <div><b id="best">–</b><span>best ever · head level</span></div>
+        <div><b id="fin">0</b><span>finished / fell last gen</span></div>
       </div>
       <div class="progress"><div id="prog"></div></div>
       <canvas id="chart" width="280" height="130"></canvas>
       <p class="legend"><i class="l-best"></i>best distance <i class="l-avg"></i>average</p>
+      <h2>Rules</h2>
+      <label class="row check"><input id="rfall" type="checkbox" checked> Head touching the ground ends the run</label>
+      <label class="row">Keep the head level <select id="rlevel"><option value="0">Don’t care</option><option value="2">A bit</option><option value="6">Strictly</option></select></label>
+      <h2>Settings</h2>
       <label class="row">Robots per generation <select id="pop"><option>20</option><option selected>40</option><option>80</option></select></label>
       <label class="row">Seconds per try <select id="tlimit"><option>10</option><option selected>15</option><option>20</option><option>30</option></select></label>
       <label class="row check"><input id="ghosts" type="checkbox" checked> Show the whole generation</label>

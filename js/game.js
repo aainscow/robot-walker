@@ -6,19 +6,19 @@
   const $$ = s => [...document.querySelectorAll(s)];
   const canvas = $('#view'), ctx = canvas.getContext('2d');
   const chart = $('#chart'), cctx = chart.getContext('2d');
-  const SAVE_KEY = 'robot-walker.v1';
+  const SAVE_KEY = 'robot-walker.v2';
 
   const COLORS = {
     sky1: '#bfe3ff', sky2: '#eef7ff', ground: '#6b8f3a', ground2: '#557530', dirt: '#8a6a43',
     grid: 'rgba(30,60,100,.08)', grid2: 'rgba(30,60,100,.16)',
     stick: '#2b3954', servo: '#ffb020', hinge: '#ffffff', weld: '#5b6b88', accel: '#3ad29f',
-    hover: '#ff4f9a', ghost: '#2b3954', lead: '#d9480f',
+    hover: '#ff4f9a', ghost: '#2b3954', lead: '#d9480f', head: '#e8eef8', fell: '#d6336c',
   };
 
   const S = {
     mode: 'build', tool: 'stick',
     design: null, nextId: 1,
-    opts: { popSize: 40, timeLimit: 15, strength: 1 },
+    opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 } },
     trainer: null, running: false, speed: 4, ghosts: true,
     bestEver: null, history: [],
     watch: null, wspeed: 1,
@@ -40,7 +40,7 @@
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
       if (!d || !d.design) return false;
-      S.design = d.design; S.opts = { ...S.opts, ...d.opts };
+      S.design = d.design; S.opts = { ...S.opts, ...d.opts, rules: { ...S.opts.rules, ...(d.opts && d.opts.rules) } };
       if (d.bestEver) S.bestEver = { ...d.bestEver, genome: Float32Array.from(d.bestEver.genome) };
       S.history = d.history || [];
       return true;
@@ -124,7 +124,7 @@
   }
   function hoverTarget(sx, sy) {
     const t = S.tool;
-    if (t === 'stick' || t === 'move' || t === 'servo' || t === 'weld') { const p = hitPoint(sx, sy); return p && { point: p }; }
+    if (t === 'stick' || t === 'move' || t === 'servo' || t === 'weld' || t === 'head') { const p = hitPoint(sx, sy); return p && { point: p }; }
     if (t === 'accel') { const s = hitStick(sx, sy); return s && { stick: s }; }
     if (t === 'erase') { const p = hitPoint(sx, sy); if (p) return { point: p }; const s = hitStick(sx, sy); return s && { stick: s }; }
     return null;
@@ -150,6 +150,11 @@
       if (stickCount(p.id) < 2) { toast(`A ${t === 'servo' ? 'servo' : 'weld'} goes where two or more sticks meet`); return; }
       p.kind = p.kind === t ? 'free' : t;
       designChanged();
+    } else if (t === 'head') {
+      const p = hitPoint(sx, sy);
+      if (!p) return;
+      S.design.head = S.design.head === p.id ? null : p.id;
+      designChanged();
     } else if (t === 'accel') {
       const s = hitStick(sx, sy);
       if (!s) return;
@@ -168,6 +173,7 @@
       // drop points no stick uses; a joint with <2 sticks can't be a servo/weld
       S.design.points = S.design.points.filter(q => stickCount(q.id) > 0);
       for (const q of S.design.points) if (stickCount(q.id) < 2) q.kind = 'free';
+      if (!pointById(S.design.head)) S.design.head = null;
       designChanged();
     }
   });
@@ -221,6 +227,7 @@
     for (const s of S.design.sticks) { if (s.a === p.id) s.a = other.id; if (s.b === p.id) s.b = other.id; }
     S.design.sticks = S.design.sticks.filter(s => s.a !== s.b);
     S.design.points = S.design.points.filter(q => q !== p);
+    if (S.design.head === p.id) S.design.head = other.id;
   }
 
   // ---------- training ----------
@@ -228,6 +235,10 @@
     const info = RW.analyse(S.design);
     if (!S.design.sticks.length) return 'Build a robot first';
     if (!info.servos) return 'Your robot needs at least one servo to move';
+    const head = pointById(S.design.head);
+    if (!head) return 'Your robot needs a head: pick the Head tool and click a point';
+    const minY = Math.min(...S.design.points.map(p => p.y));
+    if (head.y - minY < RW.HEAD_R + 0.1) return 'The head is too close to the ground: put it higher up';
     return null;
   }
   function ensureTrainer() {
@@ -248,10 +259,10 @@
   // ---------- watching ----------
   function startWatch() {
     if (!S.bestEver) { S.watch = null; return; }
-    const world = RW.makeWorld();
-    const robot = RW.buildRobot(world, S.design, S.opts.strength);
-    S.watch = { world, robot, brain: new RW.Brain(S.bestEver.genome, RW.analyse(S.design)), done: null, hold: 0, dist: 0 };
-    S.cam.x = robot.startX + 1;
+    const brain = new RW.Brain(S.bestEver.genome, RW.analyse(S.design));
+    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules });
+    S.watch.result = null; S.watch.hold = 0;
+    S.cam.x = S.watch.robot.startX + 1;
   }
 
   // ---------- main loop ----------
@@ -277,7 +288,7 @@
   let wacc = 0;
   function stepWatch(dt) {
     const w = S.watch;
-    if (w.done) {
+    if (w.result) {
       w.hold -= dt;
       if (w.hold <= 0) startWatch();
       return;
@@ -285,10 +296,10 @@
     wacc += dt * S.wspeed;
     while (wacc >= RW.DT) {
       wacc -= RW.DT;
-      RW.stepRobot(w.world, w.robot, w.brain);
-      w.dist = RW.comX(w.robot) - w.robot.startX;
-      if (w.dist >= RW.FINISH) { w.done = 'finish'; w.hold = 3; break; }
-      if (w.robot.t >= S.opts.timeLimit) { w.done = 'time'; w.hold = 2; break; }
+      w.step();
+      if (w.fallen) { w.result = 'fell'; w.hold = 2.5; break; }
+      if (w.finishTime != null) { w.result = 'finish'; w.hold = 3; break; }
+      if (w.robot.t >= S.opts.timeLimit) { w.result = 'time'; w.hold = 2; break; }
     }
     updateAccelReadout();
   }
@@ -310,7 +321,7 @@
     drawWorld();
     if (S.mode === 'build') drawDesign();
     else if (S.mode === 'train' && S.trainer) drawTraining();
-    else if (S.mode === 'watch' && S.watch) drawRobot(S.watch.robot, { alpha: 1, lead: true, sensors: true });
+    else if (S.mode === 'watch' && S.watch) drawRobot(S.watch.robot, { alpha: 1, lead: true, sensors: true, fallen: S.watch.fallen });
     drawHud();
   }
 
@@ -423,6 +434,29 @@
     ctx.fillText('A', 0, 1);
     ctx.restore(); ctx.textBaseline = 'alphabetic';
   }
+  // The head: a ball with an eye looking forward and an antenna pointing up,
+  // so you can see at a glance whether it is level.
+  function drawHead(x, y, rad, tilt, fallen) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-tilt);
+    ctx.strokeStyle = COLORS.stick; ctx.lineWidth = Math.max(2, rad * 0.12);
+    ctx.beginPath(); ctx.moveTo(0, -rad); ctx.lineTo(0, -rad * 1.55); ctx.stroke();
+    ctx.fillStyle = fallen ? COLORS.fell : COLORS.servo;
+    ctx.beginPath(); ctx.arc(0, -rad * 1.6, rad * 0.18, 0, 7); ctx.fill();
+    ctx.fillStyle = fallen ? '#ffd6e0' : COLORS.head;
+    ctx.beginPath(); ctx.arc(0, 0, rad, 0, 7); ctx.fill(); ctx.stroke();
+    // visor
+    ctx.fillStyle = COLORS.stick;
+    ctx.beginPath(); ctx.roundRect(rad * 0.05, -rad * 0.45, rad * 0.85, rad * 0.5, rad * 0.2); ctx.fill();
+    if (fallen) {
+      ctx.strokeStyle = COLORS.fell; ctx.lineWidth = Math.max(1.5, rad * 0.1);
+      const ex = rad * 0.5, ey = -rad * 0.2, e = rad * 0.16;
+      ctx.beginPath(); ctx.moveTo(ex - e, ey - e); ctx.lineTo(ex + e, ey + e); ctx.moveTo(ex + e, ey - e); ctx.lineTo(ex - e, ey + e); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#7df9ff';
+      ctx.beginPath(); ctx.arc(rad * 0.55, -rad * 0.2, rad * 0.13, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
   const jointR = () => Math.max(6, Math.min(12, S.cam.s * 0.07));
 
   function drawDesign() {
@@ -445,6 +479,7 @@
       else if (p.kind === 'weld' && n >= 2) drawWeld(x, y, r);
       else if (n >= 2) drawHinge(x, y, r);
       else { ctx.fillStyle = COLORS.stick; ctx.beginPath(); ctx.arc(x, y, w / 2 + 1, 0, 7); ctx.fill(); }
+      if (p.id === d.head) drawHead(x, y, RW.HEAD_R * S.cam.s, 0, false);
       if (hov && hov.point === p) { ctx.strokeStyle = COLORS.hover; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.stroke(); }
     }
     // stick being drawn
@@ -483,8 +518,13 @@
       for (const h of robot.welds) { const p = h.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawWeld(x, y, r); }
       for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawServo(x, y, r, -sv.joint.getJointAngle()); }
     } else {
+      // faint ghosts: skip the detail
       ctx.fillStyle = COLORS.servo;
       for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); ctx.beginPath(); ctx.arc(x, y, r * 0.6, 0, 7); ctx.fill(); }
+    }
+    if (robot.head) {
+      const hp = RW.headPos(robot), [hx, hy] = toScreen(hp.x, hp.y);
+      drawHead(hx, hy, RW.HEAD_R * S.cam.s, robot.head.body.getAngle() - robot.head.angle0, o.fallen);
     }
     if (o.sensors) {
       // the accelerometer's reading, drawn as an arrow (it points "up" when still)
@@ -504,8 +544,8 @@
 
   function drawTraining() {
     const T = S.trainer, L = T.leader();
-    if (S.ghosts) for (const a of T.agents) if (a !== L) drawRobot(a.robot, { alpha: 0.16 });
-    drawRobot(L.robot, { alpha: 1, lead: true });
+    if (S.ghosts) for (const a of T.agents) if (a !== L) drawRobot(a.robot, { alpha: a.fallen ? 0.08 : 0.16, fallen: a.fallen });
+    drawRobot(L.robot, { alpha: 1, lead: true, fallen: L.fallen });
   }
 
   function drawHud() {
@@ -513,7 +553,8 @@
     let html = '';
     if (S.mode === 'train' && S.trainer) {
       const T = S.trainer;
-      html = `Generation ${T.generation + 1} · ${T.t.toFixed(1)} / ${T.timeLimit}s`;
+      const fell = T.agents.filter(a => a.fallen).length;
+      html = `Generation ${T.generation + 1} · ${T.t.toFixed(1)} / ${T.timeLimit}s · ${fell} fallen over`;
       if (!S.running) html += ' · paused';
     } else if (S.mode === 'train') {
       html = 'Press Start learning';
@@ -521,9 +562,10 @@
       const w = S.watch;
       if (!w) html = 'Nothing learned yet, train your robot first';
       else {
-        html = `${w.robot.t.toFixed(1)}s · ${Math.max(0, w.dist).toFixed(2)} m`;
-        if (w.done === 'finish') html += `<div class="big-msg">🏁 Made it in ${w.robot.t.toFixed(1)}s!</div>`;
-        if (w.done === 'time') html += `<div class="big-msg">Out of time at ${w.dist.toFixed(1)} m</div>`;
+        html = `${w.robot.t.toFixed(1)}s · ${Math.max(0, w.dist).toFixed(2)} m · head tilt ${Math.round(w.tilt * 180 / Math.PI)}° · kept level ${Math.round(w.level * 100)}%`;
+        if (w.result === 'finish') html += `<div class="big-msg">🏁 Made it in ${w.robot.t.toFixed(1)}s!</div>`;
+        if (w.result === 'time') html += `<div class="big-msg">Out of time at ${w.dist.toFixed(1)} m</div>`;
+        if (w.result === 'fell') html += `<div class="big-msg">💥 Fell over at ${Math.max(0, w.dist).toFixed(1)} m</div>`;
       }
     }
     if (hud.innerHTML !== html) hud.innerHTML = html;
@@ -560,13 +602,13 @@
   const fmtDist = v => (v == null ? '–' : Math.max(0, v).toFixed(1) + ' m');
   function bestText(b) {
     if (!b) return '–';
-    return b.time != null ? `🏁 ${b.time.toFixed(1)}s` : fmtDist(b.distance);
+    return (b.time != null ? `🏁 ${b.time.toFixed(1)}s` : fmtDist(b.distance)) + (b.level != null ? ` · ${Math.round(b.level * 100)}%` : '');
   }
   function updateStats() {
     const T = S.trainer, last = S.history[S.history.length - 1];
     $('#gen').textContent = T ? T.generation + 1 : S.history.length;
     $('#best').textContent = bestText(S.bestEver);
-    $('#fin').textContent = last ? `${last.finished}` : '0';
+    $('#fin').textContent = last ? `${last.finished} / ${last.fell || 0}` : '0 / 0';
   }
   let liveTick = 0;
   function updateLive() {
@@ -590,6 +632,7 @@
     servo: 'Click a joint (where two or more sticks meet) to put a servo there. The brain moves servos to make the robot go.',
     weld: 'Click a joint to weld it solid, so those sticks can’t bend there.',
     accel: 'Click a stick to fit an accelerometer. It feels gravity and bumps, so the brain knows which way is down.',
+    head: 'Click a point to put the head there. The robot must keep its head level and off the ground: it starts out level the way you build it.',
     move: 'Drag a point to move it. Drop it on another point to join them.',
     erase: 'Click a point or stick to remove it.',
   };
@@ -601,7 +644,7 @@
     $('#hint').textContent = HINTS[S.tool];
     const info = RW.analyse(S.design);
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')}`;
+    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? '1 head' : 'no head yet'}`;
     const run = $('#run');
     run.textContent = S.running ? '❚❚ Pause' : (S.history.length ? '▶ Keep learning' : '▶ Start learning');
     run.classList.toggle('pause', S.running);
@@ -610,7 +653,8 @@
     $('#pop').value = S.opts.popSize; $('#tlimit').value = S.opts.timeLimit;
     $('#strength').value = S.opts.strength; $('#strengthOut').textContent = (+S.opts.strength).toFixed(1) + '×';
     const b = S.bestEver;
-    $('#winfo').textContent = b ? `Best brain so far, from generation ${b.generation}: ${b.time != null ? 'finished in ' + b.time.toFixed(1) + 's' : 'got ' + fmtDist(b.distance)}.` : 'Nothing learned yet. Train your robot first.';
+    $('#winfo').textContent = b ? `Best brain so far, from generation ${b.generation}: ${b.time != null ? 'finished in ' + b.time.toFixed(1) + 's' : 'got ' + fmtDist(b.distance)}${b.fallen ? ' then fell over' : ''}, head kept level ${Math.round((b.level ?? 1) * 100)}% of the time.` : 'Nothing learned yet. Train your robot first.';
+    $('#rfall').checked = S.opts.rules.fall; $('#rlevel').value = String(S.opts.rules.level);
     if (!S.trainer) { $('#lead').textContent = '–'; $('#prog').style.width = '0'; }
     updateStats(); drawChart(); updateAccelReadout();
   }
@@ -653,6 +697,14 @@
   $$('#wspeed button').forEach(b => b.addEventListener('click', () => { S.wspeed = +b.dataset.speed; updateUI(); }));
   $('#pop').addEventListener('change', e => { S.opts.popSize = +e.target.value; restartTrainerKeepingBest(); });
   $('#tlimit').addEventListener('change', e => { S.opts.timeLimit = +e.target.value; restartTrainerKeepingBest(); });
+  // Changing the rules changes how scores are counted, so the old best score
+  // no longer compares; keep its brain as a starting point but let it be beaten.
+  function rulesChanged() {
+    if (S.bestEver) S.bestEver = { ...S.bestEver, fitness: -Infinity };
+    restartTrainerKeepingBest();
+  }
+  $('#rfall').addEventListener('change', e => { S.opts.rules = { ...S.opts.rules, fall: e.target.checked }; rulesChanged(); });
+  $('#rlevel').addEventListener('change', e => { S.opts.rules = { ...S.opts.rules, level: +e.target.value }; rulesChanged(); });
   $('#ghosts').addEventListener('change', e => { S.ghosts = e.target.checked; });
   $('#reset').addEventListener('click', () => { forget(); toast('Brain wiped. Starting from random again.'); });
   $('#replay').addEventListener('click', () => startWatch());

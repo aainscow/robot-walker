@@ -10,9 +10,14 @@ folder: `python3 -m http.server 8107`.
 
 1. **Build**: drag to draw sticks. Where sticks meet is a free hinge; click it
    with the Servo tool to motorise it, or Weld to make it rigid. Click a stick
-   with the Accelerometer tool to fit a sensor. Or start from a preset.
+   with the Accelerometer tool to fit a sensor, and put the **Head** on a point.
+   Or start from a preset.
 2. **Train**: every generation, 40 copies of the robot each get their own brain
    and try for 15 s. The furthest become the parents of the next generation.
+   **Rules:** the head must stay up. If it touches the ground (or turns upside
+   down) the robot has fallen over: its run ends and its distance counts half.
+   Its score is also scaled by how level it kept its head ("Don't care",
+   "A bit" or "Strictly"). Level means the angle you built the head at.
 3. **Watch best**: replay the best brain so far in real time, with the
    accelerometer's reading drawn as a green arrow.
 

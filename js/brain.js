@@ -88,9 +88,10 @@
       this.popSize = opts.popSize || 40;
       this.timeLimit = opts.timeLimit || 15;
       this.strength = opts.strength || 1;
+      this.rules = opts.rules || RW.DEFAULT_RULES;
       this.generation = 0;
-      this.history = [];              // [{best, avg, finished}]
-      this.bestEver = null;           // {genome, fitness, distance, time}
+      this.history = [];              // [{best, fit, avg, finished, fell, level}]
+      this.bestEver = null;           // {genome, fitness, distance, time, level, fallen, generation}
       this.stall = 0;
       this.pop = [];
       if (opts.seed) this.pop.push(Float32Array.from(opts.seed.genome)), this.bestEver = opts.seed;
@@ -101,47 +102,41 @@
     startGeneration() {
       this.t = 0;
       this.agents = this.pop.map(genome => {
-        const world = RW.makeWorld();
-        const robot = RW.buildRobot(world, this.design, this.strength);
-        return { world, robot, brain: new Brain(genome, this.info), genome, done: false, finishTime: null, dist: 0 };
+        const run = new RW.Run(this.design, new Brain(genome, this.info), { strength: this.strength, rules: this.rules });
+        run.genome = genome;
+        return run;
       });
     }
 
-    fitnessOf(a) {
-      if (a.finishTime != null) return RW.FINISH + 2 * (this.timeLimit - a.finishTime);
-      return a.dist;
-    }
+    fitnessOf(a) { return a.fitness(this.timeLimit); }
 
     // Advance every robot one tick. Returns true when the generation ended.
     step() {
-      for (const a of this.agents) {
-        if (a.done) continue;
-        RW.stepRobot(a.world, a.robot, a.brain);
-        a.dist = RW.comX(a.robot) - a.robot.startX;
-        if (!isFinite(a.dist)) { a.dist = 0; a.done = true; }
-        else if (a.dist >= RW.FINISH) { a.done = true; a.finishTime = a.robot.t; }
-      }
+      for (const a of this.agents) if (!a.done) a.step();
       this.t += RW.DT;
       if (this.t >= this.timeLimit || this.agents.every(a => a.done)) { this.endGeneration(); return true; }
       return false;
     }
 
     leader() {
-      let best = null;
-      for (const a of this.agents) if (!best || this.fitnessOf(a) > this.fitnessOf(best)) best = a;
-      return best;
+      let best = null, bf = -Infinity;
+      for (const a of this.agents) { const f = this.fitnessOf(a); if (f > bf) { bf = f; best = a; } }
+      return best || this.agents[0];
     }
 
     endGeneration() {
       const fit = this.agents.map(a => this.fitnessOf(a));
       let bi = 0;
       for (let i = 1; i < fit.length; i++) if (fit[i] > fit[bi]) bi = i;
-      const avg = fit.reduce((s, f) => s + f, 0) / fit.length;
-      const finished = this.agents.filter(a => a.finishTime != null).length;
-      this.history.push({ best: this.agents[bi].dist, fit: fit[bi], avg: this.agents.reduce((s, a) => s + a.dist, 0) / fit.length, finished });
+      const n = this.agents.length, b = this.agents[bi];
+      this.history.push({
+        best: b.dist, fit: fit[bi], level: b.level,
+        avg: this.agents.reduce((s, a) => s + a.dist, 0) / n,
+        finished: this.agents.filter(a => a.finishTime != null).length,
+        fell: this.agents.filter(a => a.fallen).length,
+      });
       if (!this.bestEver || fit[bi] > this.bestEver.fitness + 1e-6) {
-        const a = this.agents[bi];
-        this.bestEver = { genome: Float32Array.from(a.genome), fitness: fit[bi], distance: a.dist, time: a.finishTime, generation: this.generation + 1 };
+        this.bestEver = { genome: Float32Array.from(b.genome), fitness: fit[bi], distance: b.dist, time: b.finishTime, level: b.level, fallen: b.fallen, generation: this.generation + 1 };
         this.stall = 0;
       } else this.stall++;
       // Stuck for a while? Mutate harder to shake things up.
