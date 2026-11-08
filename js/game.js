@@ -13,7 +13,7 @@
     grid: 'rgba(30,60,100,.08)', grid2: 'rgba(30,60,100,.16)',
     stick: '#2b3954', servo: '#ffb020', hinge: '#ffffff', weld: '#5b6b88', accel: '#3ad29f',
     hover: '#ff4f9a', ghost: '#2b3954', lead: '#d9480f', head: '#e8eef8', fell: '#d6336c',
-    rock: '#9aa5b8', rockEdge: '#5d6880', zone: 'rgba(58,210,159,.12)',
+    cam: '#b46cff', rock: '#9aa5b8', rockEdge: '#5d6880', zone: 'rgba(58,210,159,.12)',
   };
 
   const S = {
@@ -154,10 +154,15 @@
       if (stickCount(p.id) < 2) { toast(`A ${t === 'servo' ? 'servo' : 'weld'} goes where two or more sticks meet`); return; }
       p.kind = p.kind === t ? 'free' : t;
       designChanged();
+    } else if (t === 'camera') {
+      if (!pointById(S.design.head)) { toast('Give the robot a head first: the camera goes on the head'); return; }
+      S.design.camera = !S.design.camera;
+      designChanged();
     } else if (t === 'head') {
       const p = hitPoint(sx, sy);
       if (!p) return;
       S.design.head = S.design.head === p.id ? null : p.id;
+      if (!S.design.head) S.design.camera = false;
       designChanged();
     } else if (t === 'accel') {
       const s = hitStick(sx, sy);
@@ -177,7 +182,7 @@
       // drop points no stick uses; a joint with <2 sticks can't be a servo/weld
       S.design.points = S.design.points.filter(q => stickCount(q.id) > 0);
       for (const q of S.design.points) if (stickCount(q.id) < 2) q.kind = 'free';
-      if (!pointById(S.design.head)) S.design.head = null;
+      if (!pointById(S.design.head)) { S.design.head = null; S.design.camera = false; }
       designChanged();
     }
   });
@@ -308,7 +313,7 @@
         drawSegment(ax, ay, bx, by, COLORS.stick, w);
       }
       const h = pointById(S.design.head);
-      if (h) { const [hx, hy] = toScreen(h.x + dx, h.y + dy); drawHead(hx, hy, RW.HEAD_R * S.cam.s, 0, false); }
+      if (h) { const [hx, hy] = toScreen(h.x + dx, h.y + dy); drawHead(hx, hy, RW.HEAD_R * S.cam.s, 0, false, S.design.camera); }
       ctx.globalAlpha = 1;
     }
     if (S.drag && S.drag.kind === 'new' && S.drag.preview && S.drag.preview.w > 0.01) {
@@ -570,7 +575,7 @@
   }
   // The head: a ball with an eye looking forward and an antenna pointing up,
   // so you can see at a glance whether it is level.
-  function drawHead(x, y, rad, tilt, fallen) {
+  function drawHead(x, y, rad, tilt, fallen, camera) {
     ctx.save(); ctx.translate(x, y); ctx.rotate(-tilt);
     ctx.strokeStyle = COLORS.stick; ctx.lineWidth = Math.max(2, rad * 0.12);
     ctx.beginPath(); ctx.moveTo(0, -rad); ctx.lineTo(0, -rad * 1.55); ctx.stroke();
@@ -589,7 +594,34 @@
       ctx.fillStyle = '#7df9ff';
       ctx.beginPath(); ctx.arc(rad * 0.55, -rad * 0.2, rad * 0.13, 0, 7); ctx.fill();
     }
+    if (camera) {
+      // the time-of-flight camera: a lens on the front of the head
+      ctx.fillStyle = '#2a1b47'; ctx.strokeStyle = COLORS.cam; ctx.lineWidth = Math.max(1.5, rad * 0.1);
+      ctx.beginPath(); ctx.arc(rad * 0.82, rad * 0.32, rad * 0.24, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = COLORS.cam; ctx.beginPath(); ctx.arc(rad * 0.82, rad * 0.32, rad * 0.09, 0, 7); ctx.fill();
+    }
     ctx.restore();
+  }
+  // What the camera covers, drawn in the editor as a faint fan.
+  function drawFov(x, y, tilt) {
+    const [cx, cy] = toScreen(x, y), r = RW.CAM_RANGE * S.cam.s, [, gy] = toScreen(0, 0);
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, gy); ctx.clip(); // the camera can't see through the ground
+    ctx.fillStyle = 'rgba(180,108,255,.10)'; ctx.strokeStyle = 'rgba(180,108,255,.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, -(tilt + RW.CAM_UP), -(tilt + RW.CAM_DOWN));
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  // The camera's rays: purple where they hit something, faint where they see nothing.
+  function drawRays(cam) {
+    ctx.lineWidth = 1.5;
+    for (const h of cam.hits) {
+      if (!h) continue;
+      const [x0, y0] = toScreen(h.x0, h.y0), [x1, y1] = toScreen(h.x1, h.y1);
+      ctx.strokeStyle = h.hit ? 'rgba(180,108,255,.75)' : 'rgba(180,108,255,.18)';
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      if (h.hit) { ctx.fillStyle = COLORS.cam; ctx.beginPath(); ctx.arc(x1, y1, 3, 0, 7); ctx.fill(); }
+    }
   }
   const jointR = () => Math.max(6, Math.min(12, S.cam.s * 0.07));
 
@@ -613,7 +645,10 @@
       else if (p.kind === 'weld' && n >= 2) drawWeld(x, y, r);
       else if (n >= 2) drawHinge(x, y, r);
       else { ctx.fillStyle = COLORS.stick; ctx.beginPath(); ctx.arc(x, y, w / 2 + 1, 0, 7); ctx.fill(); }
-      if (p.id === d.head) drawHead(x, y, RW.HEAD_R * S.cam.s, 0, false);
+      if (p.id === d.head) {
+        if (d.camera) drawFov(p.x, p.y, 0);
+        drawHead(x, y, RW.HEAD_R * S.cam.s, 0, false, d.camera);
+      }
       if (hov && hov.point === p) { ctx.strokeStyle = COLORS.hover; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.stroke(); }
     }
     // stick being drawn
@@ -658,7 +693,8 @@
     }
     if (robot.head) {
       const hp = RW.headPos(robot), [hx, hy] = toScreen(hp.x, hp.y);
-      drawHead(hx, hy, RW.HEAD_R * S.cam.s, robot.head.body.getAngle() - robot.head.angle0, o.fallen);
+      if (robot.camera && (o.lead || o.sensors)) drawRays(robot.camera);
+      drawHead(hx, hy, RW.HEAD_R * S.cam.s, robot.head.body.getAngle() - robot.head.angle0, o.fallen, !!robot.camera);
     }
     if (o.sensors) {
       // the accelerometer's reading, drawn as an arrow (it points "up" when still)
@@ -752,7 +788,26 @@
     $('#prog').style.width = (100 * T.t / T.timeLimit).toFixed(1) + '%';
     $('#gen').textContent = T.generation + 1;
   }
+  function drawDepth() {
+    const cv = $('#depth'), cam = S.watch && S.watch.robot.camera;
+    $('#camRead').hidden = !!cam;
+    cv.hidden = !cam;
+    if (!cam) return;
+    const cw = cv.clientWidth || 260, ch = 70, dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(cw * dpr)) { cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr); }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, cw, ch);
+    const n = RW.CAM_RAYS, bw = cw / n;
+    for (let i = 0; i < n; i++) {
+      const near = 1 - cam.depth[i];
+      c.fillStyle = `rgba(180,108,255,${0.15 + 0.85 * near})`;
+      c.fillRect(i * bw + 1, ch - 14 - near * (ch - 18), bw - 2, near * (ch - 18) + 2);
+      c.fillStyle = '#94a0b8'; c.font = '10px system-ui'; c.textAlign = 'center';
+      c.fillText(cam.depth[i] < 1 ? (cam.depth[i] * RW.CAM_RANGE).toFixed(1) : '–', i * bw + bw / 2, ch - 2);
+    }
+  }
   function updateAccelReadout() {
+    drawDepth();
     const w = S.watch, el = $('#accelRead');
     if (!w || !w.robot.accels.length) { el.textContent = 'No accelerometer fitted. Add one to a stick so the robot can feel which way is down.'; return; }
     el.innerHTML = w.robot.accels.map((a, i) => {
@@ -771,6 +826,7 @@
     bump: 'Drag along the track to make a rounded bump: sideways for width, up for height.',
     cmove: 'Drag an obstacle to slide it along the track.',
     cerase: 'Click an obstacle to remove it.',
+    camera: 'Click anywhere to fit or remove a time-of-flight camera on the head. It measures the distance along 9 rays ahead, so the robot can see the ground and obstacles coming.',
     head: 'Click a point to put the head there. The robot must keep its head level and off the ground: it starts out level the way you build it.',
     move: 'Drag a point to move it. Drop it on another point to join them.',
     erase: 'Click a point or stick to remove it.',
@@ -786,7 +842,7 @@
     $('#cparts').textContent = `${S.course.obstacles.length} obstacle${S.course.obstacles.length === 1 ? '' : 's'}`;
     const info = RW.analyse(S.design);
     const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? '1 head' : 'no head yet'}`;
+    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')} · ${pointById(S.design.head) ? (S.design.camera ? '1 head with camera' : '1 head') : 'no head yet'}`;
     const run = $('#run');
     run.textContent = S.running ? '❚❚ Pause' : (S.history.length ? '▶ Keep learning' : '▶ Start learning');
     run.classList.toggle('pause', S.running);

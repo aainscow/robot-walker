@@ -16,6 +16,12 @@
   RW.HEAD_R = 0.13;          // radius of the head
   RW.SERVO_RANGE = 1.0;      // +/- radians from the built pose (~57 degrees)
   RW.SERVO_MAX_SPEED = 7;    // rad/s
+  // Time-of-flight camera on the head: a fan of distance-measuring rays.
+  RW.CAM_RAYS = 9;
+  RW.CAM_RANGE = 3;          // metres
+  RW.CAM_UP = 20 * Math.PI / 180;    // top ray, above the head's forward direction
+  RW.CAM_DOWN = -60 * Math.PI / 180; // bottom ray, looking down at the ground ahead
+  RW.camRayAngle = i => RW.CAM_UP + (RW.CAM_DOWN - RW.CAM_UP) * i / (RW.CAM_RAYS - 1);
 
   RW.START_ZONE = 2.5;       // obstacles can't go before this (the robot starts here)
   RW.COURSE_END = RW.FINISH + 3;
@@ -68,7 +74,9 @@
       if (p.kind === 'servo' && n >= 2) servos += n - 1;
     }
     const accels = design.sticks.filter(s => s.accel).length;
-    return { servos, accels };
+    const hasHead = design.head && design.sticks.some(s => s.a === design.head || s.b === design.head);
+    const camera = design.camera && hasHead ? RW.CAM_RAYS : 0;
+    return { servos, accels, camera };
   };
 
   // Shift the design so its lowest point sits on the ground and its left edge on the start line.
@@ -110,6 +118,7 @@
         const fixture = body.createFixture(new pl.CircleShape(local, RW.HEAD_R), { density: 1.5, friction: 0.6, filterGroupIndex: -1 });
         robot.mass += fixture.getDensity() * Math.PI * RW.HEAD_R * RW.HEAD_R;
         robot.head = { body, local, fixture, angle0: body.getAngle() };
+        if (design.camera) robot.camera = { depth: new Float32Array(RW.CAM_RAYS).fill(1), hits: [] };
       }
     }
 
@@ -224,9 +233,32 @@
     }
   }
 
+  // Time-of-flight camera: each ray measures how far it is to the ground or an
+  // obstacle (the robot can't see itself). depth[i] is that distance as a
+  // fraction of the range, 1 meaning "nothing within range".
+  function readCamera(world, robot) {
+    const cam = robot.camera;
+    if (!cam) return;
+    const h = robot.head, c = h.body.getWorldPoint(h.local);
+    const look = h.body.getAngle() - h.angle0;
+    for (let i = 0; i < RW.CAM_RAYS; i++) {
+      const a = look + RW.camRayAngle(i), dx = Math.cos(a), dy = Math.sin(a);
+      const p1 = new planck.Vec2(c.x + dx * RW.HEAD_R, c.y + dy * RW.HEAD_R);
+      const p2 = new planck.Vec2(p1.x + dx * RW.CAM_RANGE, p1.y + dy * RW.CAM_RANGE);
+      let best = 1;
+      world.rayCast(p1, p2, (fixture, point, normal, fraction) => {
+        if (!fixture.getBody().isStatic()) return -1; // ignore the robot's own parts
+        best = Math.min(best, fraction);
+        return fraction;
+      });
+      cam.depth[i] = best;
+      cam.hits[i] = { x0: p1.x, y0: p1.y, x1: p1.x + (p2.x - p1.x) * best, y1: p1.y + (p2.y - p1.y) * best, hit: best < 1 };
+    }
+  }
+
   // Inputs to the brain: a clock (so it can learn a rhythm), where each servo
-  // is, and what each accelerometer feels.
-  RW.inputCount = function (info) { return 5 + info.servos + 2 * info.accels; };
+  // is, what each accelerometer feels, and what the camera sees.
+  RW.inputCount = function (info) { return 5 + info.servos + 2 * info.accels + (info.camera || 0); };
 
   function gatherInputs(robot, phase, out) {
     let k = 0;
@@ -238,12 +270,15 @@
       out[k++] = Math.max(-2, Math.min(2, a.f.x / RW.GRAVITY));
       out[k++] = Math.max(-2, Math.min(2, a.f.y / RW.GRAVITY));
     }
+    if (robot.camera) for (let i = 0; i < RW.CAM_RAYS; i++) out[k++] = 1 - robot.camera.depth[i]; // near = big
     return out;
   }
 
   // One physics tick: think, set the servos, step the world.
   RW.stepRobot = function (world, robot, brain) {
     readAccels(robot);
+    // the camera takes a frame every 3rd tick (20 per second), like a real ToF sensor
+    if (robot.camera && (robot.camera.tick = (robot.camera.tick || 0) + 1) % 3 === 1) readCamera(world, robot);
     const phase = 2 * Math.PI * brain.freq * robot.t;
     const outs = brain.forward(gatherInputs(robot, phase, brain.inBuf));
     for (let i = 0; i < robot.servos.length; i++) {

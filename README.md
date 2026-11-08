@@ -11,6 +11,10 @@ folder: `python3 -m http.server 8107`.
 1. **Build**: drag to draw sticks. Where sticks meet is a free hinge; click it
    with the Servo tool to motorise it, or Weld to make it rigid. Click a stick
    with the Accelerometer tool to fit a sensor, and put the **Head** on a point.
+   The **Camera** tool fits a time-of-flight camera to the head: 9 rays fanned
+   from 20° above to 60° below the head's forward direction, each measuring the
+   distance (up to 3 m) to the ground or an obstacle, 20 times a second. The
+   brain gets those distances as extra inputs.
    Or start from a preset.
 2. **Course**: drag on the track to add blocks, ramps (drag from the foot to
    the top) and bumps; Move slides one along, Erase removes it. The green start

@@ -26,6 +26,7 @@
         <button data-tool="weld"><span class="ic">■</span>Weld</button>
         <button data-tool="accel"><span class="ic ic-accel">A</span>Accel&shy;erometer</button>
         <button data-tool="head"><span class="ic">◉</span>Head</button>
+        <button data-tool="camera"><span class="ic ic-cam">◎</span>Camera</button>
         <button data-tool="move"><span class="ic">✥</span>Move</button>
         <button data-tool="erase"><span class="ic">✕</span>Erase</button>
       </div>
@@ -86,6 +87,9 @@
         <button data-speed="0.25">¼×</button><button data-speed="1" class="on">1×</button><button data-speed="3">3×</button>
       </div>
       <p id="winfo" class="hint"></p>
+      <h2>Camera (top ray → bottom ray)</h2>
+      <canvas id="depth" height="70" hidden></canvas>
+      <p id="camRead" class="hint">No camera fitted. Put one on the head so the robot can see what’s ahead.</p>
       <h2>Accelerometer</h2>
       <div id="accelRead" class="hint">No accelerometer fitted. Add one to a stick so the robot can feel which way is down.</div>
     </section>
