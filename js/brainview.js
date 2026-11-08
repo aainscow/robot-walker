@@ -10,7 +10,7 @@
 (function (RW) {
   'use strict';
   const POS = [255, 176, 32], NEG = [77, 171, 247];
-  const GROUP_COLOR = { bias: '#94a0b8', clock: '#8ecbff', joint: '#ffb020', accel: '#3ad29f', cam: '#b46cff' };
+  const GROUP_COLOR = { bias: '#94a0b8', clock: '#8ecbff', joint: '#ffb020', accel: '#3ad29f', cam: '#b46cff', mem: '#ff8fb1' };
 
   function rgba(c, a) { return `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
   function signed(v, a) { return rgba(v >= 0 ? POS : NEG, a); }
@@ -19,7 +19,7 @@
   const deg = r => Math.round(r * 180 / Math.PI);
 
   // What each input is, in the order the brain sees them (see gatherInputs in sim.js).
-  RW.inputLabels = function (robot) {
+  RW.inputLabels = function (robot, brain) {
     const L = [
       { t: 'bias (always 1)', g: 'bias', k: 'bias' },
       { t: 'clock sin', g: 'clock', k: 'clock', speed: 1 }, { t: 'clock cos', g: 'clock', k: 'clock', speed: 1 },
@@ -33,12 +33,13 @@
     if (robot.camera) for (let i = 0; i < RW.CAM_RAYS; i++) {
       L.push({ t: `camera ${deg(RW.camRayAngle(i))}°`, g: 'cam', k: 'cam', ray: i });
     }
+    if (brain && brain.memory) for (let j = 0; j < brain.nH; j++) L.push({ t: `H${j + 1} a tick ago`, g: 'mem', k: 'mem', unit: j });
     return L;
   };
 
   // Lay the network out in a w x h box.
   function layout(brain, w, h) {
-    const nIn = brain.nIn, nH = RW.HIDDEN, nOut = brain.nOut;
+    const nIn = brain.nIn, nH = brain.nH, nOut = brain.nOut;
     const top = 30, bottom = 10, span = h - top - bottom;
     const xIn = Math.min(150, w * 0.3), xOut = Math.max(xIn + 120, w - Math.min(250, w * 0.4));
     const xHid = (xIn + xOut) / 2;
@@ -54,7 +55,7 @@
 
   // Weight lookups (genome layout: [freq, hidden weights, output bias + weights, stiffness]).
   function weights(b) {
-    const g = b.g, nIn = b.nIn, nH = RW.HIDDEN;
+    const g = b.g, nIn = b.nIn, nH = b.nH;
     const oBase = o => 1 + nH * nIn + o * (nH + 1);
     return {
       wIH: (j, i) => g[1 + j * nIn + i],      // input i -> hidden j
@@ -114,8 +115,8 @@
       ctx.fillText('Train your robot first, then its brain shows up here', w / 2, h / 2);
       return;
     }
-    const b = run.brain, robot = run.robot, x = b.inBuf, nIn = b.nIn, nH = RW.HIDDEN, nOut = b.nOut;
-    const L = layout(b, w, h), labels = RW.inputLabels(robot), W = weights(b);
+    const b = run.brain, robot = run.robot, x = b.inBuf, nIn = b.nIn, nH = b.nH, nOut = b.nOut;
+    const L = layout(b, w, h), labels = RW.inputLabels(robot, b), W = weights(b);
     const f0 = opts.focus;
     const focus = f0 && ((f0.kind === 'in' && f0.i < nIn) || (f0.kind === 'hid' && f0.i < nH) || (f0.kind === 'out' && f0.i < nOut)) ? f0 : null;
     const E = emphasis(W, focus);
@@ -217,8 +218,8 @@
 
   // Plain-words explanation of one node, with its live value: {title, html}.
   RW.explainBrainNode = function (run, node) {
-    const b = run.brain, robot = run.robot, x = b.inBuf, W = weights(b), nH = RW.HIDDEN;
-    const labels = RW.inputLabels(robot);
+    const b = run.brain, robot = run.robot, x = b.inBuf, W = weights(b), nH = b.nH;
+    const labels = RW.inputLabels(robot, b);
     if (node.kind === 'in') {
       const lab = labels[node.i], v = x[node.i];
       const listeners = topPushes(Array.from({ length: nH }, (_, j) => ({ name: `H${j + 1}`, v: W.wIH(j, node.i) })), 3);
@@ -247,6 +248,9 @@
           `<p>The pull felt ${along}, measured in g (1 g = the pull of gravity). Standing still and level it reads x 0, y +1: just gravity pulling down. Tilting shifts gravity from y into x; bumps and lurches add sudden spikes.</p>` +
           `<p>Now: <b>${sgn(v)} g</b>, which is ${meaning}.</p>${listen}` };
       }
+      if (lab.k === 'mem') return { title: `${lab.t}: memory`, html:
+        `<p>What hidden unit H${lab.unit + 1} was doing one tick (1/60 s) ago, fed back in. This loop is the brain's memory: because each unit can see what the others were just doing, the brain can keep something going over time, like "I'm in the middle of a step" or "I just got jolted".</p>` +
+        `<p>Now: <b>${sgn(v)}</b>.</p>${listen}` };
       if (lab.k === 'cam') {
         const a = deg(RW.camRayAngle(lab.ray));
         const dir = a > 0 ? `${a}° above straight ahead` : a < 0 ? `${-a}° below straight ahead` : 'straight ahead';
@@ -279,13 +283,13 @@
   // The step-by-step guide.
   RW.BRAIN_GUIDE = [
     { part: null, title: 'This is the robot’s whole program', html:
-      '<p>Sixty times a second, numbers flow from left to right: what the robot senses goes in, passes through 8 hidden units, and comes out as instructions for each servo.</p><p>There is no list of moves stored anywhere. The walk comes from these numbers reacting to what is happening right now.</p>' },
+      '<p>Sixty times a second, numbers flow from left to right: what the robot senses goes in, passes through the hidden units, and comes out as instructions for each servo.</p><p>There is no list of moves stored anywhere. The walk comes from these numbers reacting to what is happening right now.</p>' },
     { part: 'in', title: '1. Inputs: what the robot knows', html:
-      '<p>On the left. A <b style="color:#8ecbff">clock</b> it makes for itself (its sense of rhythm), where each <b style="color:#ffb020">joint</b> is, what the <b style="color:#3ad29f">accelerometer</b> feels (which way is down, and bumps), and what the <b style="color:#b46cff">camera</b> sees ahead.</p><p>Each number is the reading right now. Hover one to see what it means.</p>' },
+      '<p>On the left. A <b style="color:#8ecbff">clock</b> it makes for itself (its sense of rhythm), where each <b style="color:#ffb020">joint</b> is, what the <b style="color:#3ad29f">accelerometer</b> feels (which way is down, and bumps), and what the <b style="color:#b46cff">camera</b> sees ahead. A brain with memory also gets <b style="color:#ff8fb1">its own hidden units from a moment ago</b>.</p><p>Each number is the reading right now. Hover one to see what it means.</p>' },
     { part: 'edges', title: '2. Weights: the lines', html:
       '<p>Every line is a <b>weight</b>: one number that evolution picked. A signal travelling along a line gets multiplied by it. Thick lines are big weights.</p><p>The colour shows what the signal is doing right now: <b style="color:#ffb020">orange pushes the next unit up</b>, <b style="color:#4dabf7">blue pushes it down</b>, and brighter means stronger. Watch them flicker as the robot moves.</p>' },
     { part: 'hid', title: '3. Hidden units: little detectors', html:
-      '<p>Each of H1 to H8 adds up everything coming into it and squashes the total to between −1 and +1. Some end up responding to the beat of the clock, some to tilting, some to a leg being in a certain place.</p><p>Nobody decided what each one does; evolution shaped them. Hover one to see what is driving it right now.</p>' },
+      '<p>Each hidden unit (H1, H2…) adds up everything coming into it and squashes the total to between −1 and +1. Some end up responding to the beat of the clock, some to tilting, some to a leg being in a certain place.</p><p>Nobody decided what each one does; evolution shaped them. Hover one to see what is driving it right now.</p>' },
     { part: 'out', title: '4. Outputs: orders for the servos', html:
       '<p>On the right, one per servo. Each adds up the hidden units the same way, and its value becomes a target angle. The gauge shows the target (orange) and where the joint really is (white).</p><p>Click a servo on the robot above to see only the lines that feed it.</p>' },
     { part: null, title: '5. So where did the numbers come from?', html:

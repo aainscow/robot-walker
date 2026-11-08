@@ -1022,6 +1022,9 @@
     $('#strength').value = S.opts.strength; $('#strengthOut').textContent = (+S.opts.strength).toFixed(1) + '×';
     const b = S.bestEver;
     $('#winfo').textContent = b ? `Best brain so far, from generation ${b.generation}: ${b.time != null ? 'finished in ' + b.time.toFixed(1) + 's' : 'got ' + fmtDist(b.distance)}${b.fallen ? ' then fell over' : ''}, head kept level ${Math.round((b.level ?? 1) * 100)}% of the time.` : 'Nothing learned yet. Train your robot first.';
+    const br = RW.analyse(S.design);
+    $('#bhidden').value = String(br.hidden); $('#bmemory').checked = br.memory;
+    $('#bhint').textContent = `${RW.genomeLength(br)} numbers to learn. A bigger brain, or one with memory, can hold cleverer behaviour, but has more numbers for evolution to tune, so it learns more slowly. On the starter courses the 8-unit brain learns best in 40 generations; try the others on harder courses, with more robots or more patience. Changing these starts learning again.`;
     $('#rfall').checked = S.opts.rules.fall; $('#rlevel').value = String(S.opts.rules.level);
     if (!S.trainer) { $('#lead').textContent = '–'; $('#prog').style.width = '0'; }
     updateStats(); drawChart(); updateAccelReadout();
@@ -1079,6 +1082,14 @@
     if (S.bestEver) S.bestEver = { ...S.bestEver, fitness: -Infinity };
     restartTrainerKeepingBest();
   }
+  // The brain's shape is part of the robot: changing it means a fresh brain.
+  function brainChanged(patch) {
+    S.design.brain = { ...(S.design.brain || {}), ...patch };
+    designChanged();
+    toast('New brain: learning starts again from scratch');
+  }
+  $('#bhidden').addEventListener('change', e => brainChanged({ hidden: +e.target.value }));
+  $('#bmemory').addEventListener('change', e => brainChanged({ memory: e.target.checked }));
   $('#rfall').addEventListener('change', e => { S.opts.rules = { ...S.opts.rules, fall: e.target.checked }; rulesChanged(); });
   $('#rlevel').addEventListener('change', e => { S.opts.rules = { ...S.opts.rules, level: +e.target.value }; rulesChanged(); });
   $('#ghosts').addEventListener('change', e => { S.ghosts = e.target.checked; });

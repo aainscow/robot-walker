@@ -91,7 +91,8 @@
     const accels = design.sticks.filter(s => s.accel).length;
     const hasHead = design.head && design.sticks.some(s => s.a === design.head || s.b === design.head);
     const camera = design.camera && hasHead ? RW.CAM_RAYS : 0;
-    return { servos, accels, camera };
+    const b = design.brain || {};
+    return { servos, accels, camera, hidden: b.hidden || 8, memory: !!b.memory };
   };
 
   // Shift the design so its lowest point sits on the ground and its left edge on the start line.

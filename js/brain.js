@@ -1,11 +1,16 @@
 // The robot's brain (a tiny neural network) and how it learns (evolution).
 //
-// Genome = [frequency gene, hidden-layer weights, output-layer weights].
+// Genome = [frequency gene, hidden-layer weights, output-layer weights, stiffness].
+// The brain's size (hidden units) and whether it has memory come from the
+// design (design.brain), so changing them gives the robot a fresh brain.
+// With memory, each hidden unit also sees what every hidden unit was doing a
+// tick ago (a recurrent, "Elman" network), so the brain can carry information
+// forward in time: "I just tripped", "the front leg is on its way back".
 // Each generation every genome drives its own copy of the robot in its own
 // world; the ones that get furthest become the parents of the next generation.
 (function (RW) {
   'use strict';
-  const HIDDEN = 8;
+  const HIDDEN = 8; // default size
 
   function gauss() {
     let u = 0, v = 0;
@@ -14,25 +19,40 @@
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   }
 
+  // Inputs the network sees: the sensors, plus (with memory) the hidden units' last values.
+  RW.netInputCount = info => RW.inputCount(info) + (info.memory ? info.hidden : 0);
   RW.genomeLength = function (info) {
-    const nIn = RW.inputCount(info);
-    return 1 + HIDDEN * nIn + info.servos * (HIDDEN + 1) + info.servos; // + one stiffness gene per servo
+    const nIn = RW.netInputCount(info), nH = info.hidden;
+    return 1 + nH * nIn + info.servos * (nH + 1) + info.servos; // + one stiffness gene per servo
   };
 
+  // A new random brain. Extra capacity starts out quiet, so a bigger brain or
+  // one with memory begins by behaving much like the small one, and evolution
+  // can grow into the extra room instead of starting from chaos:
+  //  - memory connections start near zero (otherwise the loop starts jittery)
+  //  - output weights shrink as the hidden layer grows (otherwise more units
+  //    add up to pinned, all-or-nothing outputs)
   RW.randomGenome = function (info) {
     const g = new Float32Array(RW.genomeLength(info));
     for (let i = 0; i < g.length; i++) g[i] = gauss() * 0.6;
+    const nIn = RW.netInputCount(info), nSense = RW.inputCount(info), nH = info.hidden;
+    if (info.memory) for (let j = 0; j < nH; j++) for (let i = nSense; i < nIn; i++) g[1 + j * nIn + i] = gauss() * 0.05;
+    const scale = Math.sqrt(8 / nH), oStart = 1 + nH * nIn;
+    for (let o = 0; o < info.servos; o++) for (let j = 0; j < nH; j++) g[oStart + o * (nH + 1) + 1 + j] *= scale;
     return g;
   };
 
   class Brain {
     constructor(genome, info) {
       this.g = genome;
-      this.nIn = RW.inputCount(info);
+      this.nH = info.hidden;
+      this.nSense = RW.inputCount(info);
+      this.memory = !!info.memory;
+      this.nIn = RW.netInputCount(info);
       this.nOut = info.servos;
       this.freq = 0.3 + 1.7 / (1 + Math.exp(-genome[0])); // 0.3 .. 2 Hz
       this.inBuf = new Float32Array(this.nIn);
-      this.h = new Float32Array(HIDDEN);
+      this.h = new Float32Array(this.nH);
       this.out = new Float32Array(this.nOut);
       // The last genes set each servo's stiffness (how hard it holds its target).
       const g0 = genome.length - this.nOut;
@@ -40,16 +60,18 @@
       for (let i = 0; i < this.nOut; i++) this.gain[i] = RW.GAIN_MIN + (RW.GAIN_MAX - RW.GAIN_MIN) / (1 + Math.exp(-genome[g0 + i]));
     }
     forward(x) {
-      const g = this.g, nIn = this.nIn;
+      const g = this.g, nIn = this.nIn, nH = this.nH;
+      // memory: the hidden units' values from last tick become extra inputs
+      if (this.memory) for (let j = 0; j < nH; j++) x[this.nSense + j] = this.h[j];
       let k = 1;
-      for (let j = 0; j < HIDDEN; j++) {
+      for (let j = 0; j < nH; j++) {
         let s = 0;
         for (let i = 0; i < nIn; i++) s += g[k++] * x[i];
         this.h[j] = Math.tanh(s);
       }
       for (let o = 0; o < this.nOut; o++) {
         let s = g[k++]; // bias
-        for (let j = 0; j < HIDDEN; j++) s += g[k++] * this.h[j];
+        for (let j = 0; j < nH; j++) s += g[k++] * this.h[j];
         this.out[o] = Math.tanh(s);
       }
       return this.out;

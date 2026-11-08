@@ -37,6 +37,13 @@ folder: `python3 -m http.server 8107`.
    obstacle the robot has fallen over: its run ends and its distance counts half.
    Its score is also scaled by how level it kept its head ("Don't care",
    "A bit" or "Strictly"). Level means the angle you built the head at.
+   **Brain** settings choose the network: 4, 8 (default), 16 or 24 hidden
+   units, and optional memory (each hidden unit also sees what all of them
+   did a tick ago, so it can carry information through time). New brains
+   start their extra capacity quiet, so they begin like the small one. In
+   tests (dog on Hurdles, walker on flat, 3 runs each, 40 generations) the
+   8-unit brain without memory still learned best: more numbers to tune
+   means slower evolution.
 4. **Watch best**: replay the best brain so far in real time, with the
    accelerometer's reading drawn as a green arrow.
    "Run for" lets the replay carry on past the finish line and the training
