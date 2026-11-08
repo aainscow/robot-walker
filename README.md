@@ -47,8 +47,12 @@ folder: `python3 -m http.server 8107`.
    replay: every input with its current value (clock, joint angles,
    accelerometer, camera), the 8 hidden units, and each servo's target next to
    where it really is. Connections glow with the signal they carry right now
-   (orange pushes up, blue pushes down). Hover a servo there, or click one on
-   the robot, to trace only what feeds it.
+   (orange pushes up, blue pushes down). Hover anything in it (an input, a
+   hidden unit H1-H8, or a servo output) for a plain-words explanation of what
+   it is and what its value means right now, with what is pushing it hardest;
+   click to keep it highlighted, or click a servo on the robot. The ❚❚ button
+   pauses the replay so you can look at one moment, and "How does the brain
+   work?" walks through it step by step.
 
 The design and the best brain are saved in the browser's localStorage.
 

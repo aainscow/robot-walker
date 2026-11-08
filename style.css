@@ -27,6 +27,16 @@ aside h2:first-child { margin-top: 0; }
 .ic-cam { color: #b46cff; }
 .ic-accel { color: var(--accent2); font-weight: 700; }
 .hint { color: var(--muted); font-size: 13px; margin: 10px 0; }
+.tip { position: absolute; z-index: 5; width: 300px; max-width: calc(100% - 12px); background: rgba(27,33,48,.97); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0,0,0,.4); pointer-events: none; }
+.tip h3, .guide h3 { margin: 0 0 6px; font-size: 13.5px; color: var(--text); }
+.tip p, .guide p { margin: 0 0 6px; color: #c9d1e0; }
+.tip p:last-child, .guide p:last-child { margin-bottom: 0; }
+.tip-dim { color: var(--muted) !important; }
+.guide { background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 13px; line-height: 1.45; }
+.guide-nav { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.guide-nav span { flex: 1; text-align: center; color: var(--muted); font-size: 12px; }
+.guide-nav button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+.guide-nav button:disabled { opacity: .4; cursor: default; }
 .warn { font-size: 13px; color: #ffb3c7; background: rgba(214,51,108,.15); border: 1px solid rgba(214,51,108,.5); border-radius: 8px; padding: 8px; margin: 8px 0; }
 .parts { font-size: 13px; margin: 6px 0; }
 .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }

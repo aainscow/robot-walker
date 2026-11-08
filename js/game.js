@@ -23,7 +23,7 @@
     opts: { popSize: 40, timeLimit: 15, strength: 1, rules: { fall: true, level: 2 } },
     trainer: null, running: false, speed: 4, ghosts: true,
     bestEver: null, history: [],
-    watch: null, wspeed: 1, wlen: 'train', showBrain: true, brainFocus: null, brainHover: null,
+    watch: null, wspeed: 1, wlen: 'train', showBrain: true, brainFocus: null, brainHover: null, guide: null,
     cam: { x: 1, y: 0.9, s: 120 },
     drag: null, hover: null, mouse: null,
   };
@@ -491,26 +491,55 @@
   }
 
   // ---------- brain view ----------
-  const brainCv = $('#brain'), bctx = brainCv.getContext('2d');
+  // S.brainFocus: a node clicked to keep it highlighted; S.brainHover: the node
+  // under the mouse. A node is {kind: 'in' | 'hid' | 'out', i}.
+  const brainCv = $('#brain'), bctx = brainCv.getContext('2d'), tip = $('#brainTip');
+  const sameNode = (a, b) => !!a && !!b && a.kind === b.kind && a.i === b.i;
+  let tipTick = 0;
   function drawBrain() {
     const show = S.mode === 'watch' && S.showBrain;
     if (brainCv.hidden === show) brainCv.hidden = !show;
-    if (!show) return;
+    if (!show) { tip.hidden = true; return; }
     const w = brainCv.clientWidth, h = brainCv.clientHeight, dpr = window.devicePixelRatio || 1;
     if (brainCv.width !== Math.round(w * dpr) || brainCv.height !== Math.round(h * dpr)) { brainCv.width = Math.round(w * dpr); brainCv.height = Math.round(h * dpr); }
     bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const focus = S.brainFocus ?? S.brainHover;
-    RW.drawBrainView(bctx, w, h, S.watch, focus != null && S.watch && focus < S.watch.brain.nOut ? focus : null, S.brainFocus != null);
+    const focus = S.brainHover || S.brainFocus;
+    const guide = S.guide != null ? RW.BRAIN_GUIDE[S.guide].part : null;
+    RW.drawBrainView(bctx, w, h, S.watch, { focus, locked: sameNode(focus, S.brainFocus), guide });
+    // the explanation of the highlighted node, beside it (refreshed a few times a second as values change)
+    if (!focus || !S.watch) { tip.hidden = true; return; }
+    if (tip.hidden || ++tipTick % 8 === 0 || tip.dataset.node !== focus.kind + focus.i) {
+      const ex = RW.explainBrainNode(S.watch, focus);
+      tip.innerHTML = `<h3>${ex.title}</h3>${ex.html}`;
+      tip.dataset.node = focus.kind + focus.i;
+      tip.hidden = false;
+      const pos = RW.brainViewNodePos(S.watch, w, h, focus);
+      const stage = $('#stage').getBoundingClientRect(), br = brainCv.getBoundingClientRect();
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = br.left - stage.left + pos.x + (focus.kind === 'out' ? -tw - 18 : 22);
+      let top = br.top - stage.top + pos.y - th / 2;
+      left = Math.max(6, Math.min(stage.width - tw - 6, left));
+      top = Math.max(br.top - stage.top + 26, Math.min(stage.height - th - 6, top));
+      tip.style.left = left + 'px'; tip.style.top = top + 'px';
+    }
   }
   function brainHit(e) {
     if (!S.watch) return null;
     const r = brainCv.getBoundingClientRect();
-    return RW.brainViewHit(S.watch.brain, r.width, r.height, e.clientX - r.left, e.clientY - r.top);
+    return RW.brainViewNodeAt(S.watch, r.width, r.height, e.clientX - r.left, e.clientY - r.top);
   }
-  brainCv.addEventListener('pointermove', e => { S.brainHover = brainHit(e); brainCv.style.cursor = S.brainHover != null ? 'pointer' : 'default'; });
-  brainCv.addEventListener('pointerleave', () => { S.brainHover = null; });
-  brainCv.addEventListener('pointerdown', e => { const o = brainHit(e); if (o != null) S.brainFocus = S.brainFocus === o ? null : o; });
-  // Clicking a servo on the robot traces it in the brain view.
+  brainCv.addEventListener('pointermove', e => {
+    const n = brainHit(e);
+    if (!sameNode(n, S.brainHover)) { S.brainHover = n; tip.hidden = true; }
+    brainCv.style.cursor = n ? 'pointer' : 'default';
+  });
+  brainCv.addEventListener('pointerleave', () => { S.brainHover = null; tip.hidden = true; });
+  brainCv.addEventListener('pointerdown', e => {
+    const n = brainHit(e);
+    S.brainFocus = n && !sameNode(n, S.brainFocus) ? n : null;
+    tip.hidden = true;
+  });
+  // Clicking a servo on the robot highlights it in the brain view.
   function watchDown(e) {
     if (!S.watch) return;
     const [sx, sy] = evPos(e);
@@ -519,8 +548,24 @@
       const p = s.joint.getAnchorA(), [x, y] = toScreen(p.x, p.y), d = Math.hypot(x - sx, y - sy);
       if (d < bd) { bd = d; best = i; }
     });
-    if (best != null) S.brainFocus = S.brainFocus === best ? null : best;
+    if (best != null) { const n = { kind: 'out', i: best }; S.brainFocus = sameNode(n, S.brainFocus) ? null : n; tip.hidden = true; }
   }
+
+  // The step-by-step guide to the brain, in the Watch panel.
+  function showGuide() {
+    const box = $('#guide');
+    if (S.guide == null) { box.hidden = true; $('#guideStart').hidden = false; return; }
+    const g = RW.BRAIN_GUIDE[S.guide];
+    box.hidden = false; $('#guideStart').hidden = true;
+    $('#guideBody').innerHTML = `<h3>${g.title}</h3>${g.html}`;
+    $('#guideStep').textContent = `${S.guide + 1} / ${RW.BRAIN_GUIDE.length}`;
+    $('#guidePrev').disabled = S.guide === 0;
+    $('#guideNext').textContent = S.guide === RW.BRAIN_GUIDE.length - 1 ? 'Done' : 'Next →';
+  }
+  $('#guideStart').addEventListener('click', () => { S.guide = 0; if (!S.showBrain) { S.showBrain = true; $('#showBrain').checked = true; } showGuide(); });
+  $('#guidePrev').addEventListener('click', () => { S.guide = Math.max(0, S.guide - 1); showGuide(); });
+  $('#guideNext').addEventListener('click', () => { S.guide = S.guide >= RW.BRAIN_GUIDE.length - 1 ? null : S.guide + 1; showGuide(); });
+  $('#guideClose').addEventListener('click', () => { S.guide = null; showGuide(); });
 
   // The start line is x = 0; distances are measured from it.
   function startX() { return 0; }
@@ -796,7 +841,7 @@
         drawServo(x, y, r, -sv.joint.getJointAngle(), sv.continuous);
         if (o.sensors && S.showBrain) {
           // number the servos so they match the brain view
-          const f = (S.brainFocus ?? S.brainHover) === i;
+          const fn = S.brainHover || S.brainFocus, f = !!fn && fn.kind === 'out' && fn.i === i;
           ctx.fillStyle = f ? '#ffffff' : 'rgba(29,42,58,.85)';
           ctx.beginPath(); ctx.roundRect(x + r * 1.3, y - r * 2.4, 22, 15, 4); ctx.fill();
           ctx.fillStyle = f ? '#1d2a3a' : '#ffffff'; ctx.font = 'bold 10px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1040,6 +1085,7 @@
   $('#reset').addEventListener('click', () => { forget(); toast('Brain wiped. Starting from random again.'); });
   $('#replay').addEventListener('click', () => startWatch());
   $('#showBrain').addEventListener('change', e => { S.showBrain = e.target.checked; });
+  showGuide();
   $('#wlen').addEventListener('change', e => { S.wlen = e.target.value; startWatch(); });
 
   // Changing population or time limit restarts the generation but keeps the best brain as a seed.
