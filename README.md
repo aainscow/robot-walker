@@ -49,3 +49,8 @@ The design and the best brain are saved in the browser's localStorage.
 
 Courses are `{ obstacles: [{type: 'block'|'ramp'|'bump', x, w, h, dir}] }` in
 metres from the start line; `RW.obstaclePoly` turns each into a convex polygon.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). planck.js (in `vendor/`) is also MIT, see
+[vendor/planck-LICENSE](vendor/planck-LICENSE).
