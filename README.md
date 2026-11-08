@@ -29,8 +29,8 @@ folder: `python3 -m http.server 8107`.
    and then make it harder.
 3. **Train**: every generation, 40 copies of the robot each get their own brain
    and try for 15 s. The furthest become the parents of the next generation.
-   **Rules:** the head must stay up. If it touches the ground (or turns upside
-   down, or bumps into an obstacle) the robot has fallen over: its run ends and its distance counts half.
+   **Rules:** the head must stay up. If it touches the ground or bumps into an
+   obstacle the robot has fallen over: its run ends and its distance counts half.
    Its score is also scaled by how level it kept its head ("Don't care",
    "A bit" or "Strictly"). Level means the angle you built the head at.
 4. **Watch best**: replay the best brain so far in real time, with the

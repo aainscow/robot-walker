@@ -185,8 +185,8 @@
   };
 
   // One attempt by one brain: steps the robot and keeps score.
-  //   rules.fall:  touching the ground with the head (or turning it upside
-  //                down) ends the run and halves the distance
+  //   rules.fall:  the head touching the ground or an obstacle ends the run
+  //                and halves the distance
   //   rules.level: 0 = don't care, higher = stricter about keeping the head level
   class Run {
     constructor(design, brain, opts) {
@@ -207,7 +207,8 @@
       if (hs) {
         this.tilt = hs.tilt;
         this.levelSum += Math.pow(Math.max(0, Math.cos(hs.tilt)), this.rules.level);
-        if (this.rules.fall && (hs.touching || Math.abs(hs.tilt) > Math.PI / 2)) { this.done = this.fallen = true; return; }
+        // only a real bump counts: tilting (even upside down) just costs level score
+        if (this.rules.fall && hs.touching) { this.done = this.fallen = true; return; }
       } else this.levelSum += 1;
       if (this.dist >= RW.FINISH) { this.done = true; this.finishTime = this.robot.t; }
     }
