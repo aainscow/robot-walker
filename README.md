@@ -53,9 +53,14 @@ folder: `python3 -m http.server 8107`.
 4. **Watch best**: replay the best brain so far in real time, with the
    accelerometer's reading drawn as a green arrow.
    "Run for" lets the replay carry on past the finish line and the training
-   time limit (30 s, 1 or 3 minutes, or as long as it can) on flat ground
-   that goes on for 500 m. It stops early if the robot falls or makes no
-   progress for 10 s.
+   time limit (30 s, 1 or 3 minutes) on flat ground that goes on for 500 m.
+   It stops early if the robot falls or makes no progress for 10 s.
+   **Forever, with random obstacles** fills the ground past the course with a
+   fresh set of random obstacles on every replay, to see how far the robot
+   can get. Every 20 m is a new level that brings in a new kind of obstacle
+   (bumps, hurdles, hills, steps, walls), and everything gets taller and closer
+   together as it goes. Obstacles are sized to the robot, and the replay keeps
+   a record distance for the current best brain.
    **Show the brain working** draws the robot's neural network live under the
    replay: every input with its current value (clock, joint angles,
    accelerometer, camera), the 8 hidden units, and each servo's target next to

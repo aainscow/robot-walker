@@ -407,7 +407,10 @@
   function startWatch() {
     if (!S.bestEver) { S.watch = null; return; }
     const brain = new RW.Brain(S.bestEver.genome, RW.analyse(S.design));
-    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules, course: S.course, keepGoing: S.wlen !== 'train' });
+    // running forever: a fresh set of random obstacles past the course each time
+    const endless = S.wlen === 'forever' ? RW.endlessObstacles((Math.random() * 2 ** 31) | 0, RW.designSize(S.design)) : null;
+    if (S.recordFor !== S.bestEver) { S.recordFor = S.bestEver; S.record = 0; }
+    S.watch = new RW.Run(S.design, brain, { strength: S.opts.strength, rules: S.opts.rules, course: S.course, keepGoing: S.wlen !== 'train', endless });
     S.watch.result = null; S.watch.hold = 0; S.watch.best = 0; S.watch.bestT = 0;
     S.cam.x = 1;
   }
@@ -454,6 +457,7 @@
       }
       // long replay: keep going past the finish until time is up, it gets stuck, or the ground runs out
       if (w.dist > w.best + 0.25) { w.best = w.dist; w.bestT = w.robot.t; }
+      if (w.endless && w.dist > S.record) { S.record = w.dist; w.newRecord = true; }
       if (w.robot.t - w.bestT > 10) { w.result = 'stuck'; w.hold = 3; break; }
       if (w.dist >= RW.WORLD_END - 5) { w.result = 'end'; w.hold = 3; break; }
       if (S.wlen !== 'forever' && w.robot.t >= +S.wlen) { w.result = 'time'; w.hold = 3; break; }
@@ -636,6 +640,29 @@
 
   function drawObstacles(highlight) {
     for (const o of S.course.obstacles) drawObstacle(o, S.hover && S.hover.obstacle === o);
+    const w = S.mode === 'watch' && S.watch;
+    if (w && w.endless) {
+      const x0 = S.cam.x - W / 2 / S.cam.s - 6, x1 = S.cam.x + W / 2 / S.cam.s + 1;
+      for (const o of w.endless) if (o.x + o.w > x0 && o.x < x1) drawObstacle(o);
+      drawLevelSigns(x0, x1);
+    }
+  }
+  // a signpost at the start of each endless level
+  function drawLevelSigns(x0, x1) {
+    for (let lvl = 1; ; lvl++) {
+      const x = RW.ENDLESS_START + (lvl - 1) * RW.ENDLESS_LEVEL;
+      if (x > x1 || x > RW.WORLD_END - 15) break;
+      if (x < x0 - 2) continue;
+      const [sx, gy] = toScreen(x, 0), ph = Math.max(50, S.cam.s * 1.1);
+      ctx.fillStyle = '#6b4a2b'; ctx.fillRect(sx - 2, gy - ph, 4, ph);
+      const label = `Level ${lvl}: ${RW.endlessName(lvl)}`;
+      ctx.font = 'bold 12px system-ui';
+      const tw = ctx.measureText(label).width + 14;
+      ctx.fillStyle = '#f2c14e'; ctx.fillRect(sx - tw / 2, gy - ph - 22, tw, 22);
+      ctx.strokeStyle = '#6b4a2b'; ctx.lineWidth = 2; ctx.strokeRect(sx - tw / 2, gy - ph - 22, tw, 22);
+      ctx.fillStyle = '#2a1d0e'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, sx, gy - ph - 11); ctx.textBaseline = 'alphabetic';
+    }
   }
   function drawObstacle(o, hot, preview) {
     const poly = RW.obstaclePoly(o);
@@ -899,11 +926,18 @@
       else {
         html = `${w.robot.t.toFixed(1)}s · ${Math.max(0, w.dist).toFixed(2)} m · head tilt ${Math.round(w.tilt * 180 / Math.PI)}° · kept level ${Math.round(w.level * 100)}%`;
         if (w.finishTime != null && S.wlen !== 'train') html += `<br>🏁 crossed the finish at ${w.finishTime.toFixed(1)}s`;
+        if (w.endless) {
+          const lvl = RW.endlessLevel(w.dist);
+          html += w.dist >= RW.ENDLESS_START ? `<br>Level ${lvl}: ${RW.endlessName(lvl)}` : '<br>Random obstacles start after the course';
+          if (S.record > 0) html += ` · record ${S.record.toFixed(1)} m`;
+        }
         if (w.result === 'finish') html += `<div class="big-msg">🏁 Made it in ${w.robot.t.toFixed(1)}s!</div>`;
         if (w.result === 'time') html += `<div class="big-msg">${S.wlen === 'train' ? 'Out of time' : 'Time’s up'} at ${w.dist.toFixed(1)} m</div>`;
-        if (w.result === 'stuck') html += `<div class="big-msg">Stuck at ${w.dist.toFixed(1)} m (no progress for 10 s)</div>`;
+        const where = w.endless && w.dist >= RW.ENDLESS_START ? ` on level ${RW.endlessLevel(w.dist)}` : '';
+        const rec = w.endless && w.newRecord && w.result ? '<br>New record!' : '';
+        if (w.result === 'stuck') html += `<div class="big-msg">Stuck at ${w.dist.toFixed(1)} m${where} (no progress for 10 s)${rec}</div>`;
         if (w.result === 'end') html += `<div class="big-msg">Reached the end of the world! ${w.dist.toFixed(0)} m in ${w.robot.t.toFixed(0)}s</div>`;
-        if (w.result === 'fell') html += `<div class="big-msg">💥 Fell over at ${Math.max(0, w.dist).toFixed(1)} m</div>`;
+        if (w.result === 'fell') html += `<div class="big-msg">💥 Fell over at ${Math.max(0, w.dist).toFixed(1)} m${where}${rec}</div>`;
       }
     }
     if (hud.innerHTML !== html) hud.innerHTML = html;

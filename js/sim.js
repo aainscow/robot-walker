@@ -56,15 +56,67 @@
     return [[x, 0], [x + w, 0], [x + w, h], [x, h]];
   };
 
-  // The world: ground, end walls, and the course's obstacles.
-  RW.makeWorld = function (course) {
+  // Endless mode: past the course, random obstacles that get harder every level.
+  RW.ENDLESS_START = RW.COURSE_END + 2;
+  RW.ENDLESS_LEVEL = 20;     // metres per level
+  RW.ENDLESS_NAMES = ['Bumps', 'Hurdles', 'Hills', 'Steps', 'Walls'];
+  RW.endlessLevel = x => Math.max(1, Math.floor((x - RW.ENDLESS_START) / RW.ENDLESS_LEVEL) + 1);
+  RW.endlessName = lvl => RW.ENDLESS_NAMES[lvl - 1] || 'Everything, taller';
+  // How big the robot is (metres), so obstacles are a fair size for it.
+  RW.designSize = function (design) {
+    const xs = design.points.map(p => p.x), ys = design.points.map(p => p.y);
+    return xs.length ? Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys)) : 1;
+  };
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  // Each level adds a new kind of obstacle, and everything gets taller and
+  // closer together the further the robot goes.
+  RW.endlessObstacles = function (seed, robotSize) {
+    const rand = mulberry32(seed);
+    const k = Math.max(0.5, Math.min(1.5, (robotSize || 1.2) / 1.2));
+    const out = []; let id = 1000;
+    const add = (type, x, w, h, dir) => out.push({ id: id++, type, x, w, h, dir: dir || 1, endless: true });
+    let x = RW.ENDLESS_START + 1.5;
+    while (x < RW.WORLD_END - 15) {
+      const lvl = RW.endlessLevel(x);
+      const d = (x - RW.ENDLESS_START) / RW.ENDLESS_LEVEL; // smooth difficulty, 0 at the start
+      const h = k * Math.min(0.8, 0.06 + 0.035 * d) * (0.7 + 0.6 * rand());
+      const kinds = ['bump', 'block', 'hill', 'steps', 'wall'].slice(0, Math.min(5, lvl));
+      // the newest kind turns up most on its own level
+      const kind = rand() < 0.45 ? kinds[kinds.length - 1] : kinds[Math.floor(rand() * kinds.length)];
+      let w;
+      if (kind === 'bump') { w = k * (0.8 + 1.2 * rand()); add('bump', x, w, h); }
+      else if (kind === 'block') { w = k * (0.1 + 0.3 * rand()); add('block', x, w, h); }
+      else if (kind === 'hill') {
+        const hh = h * 2.5, up = hh / (0.15 + 0.25 * rand()), top = k * (0.5 + 2 * rand()), down = hh / (0.15 + 0.25 * rand());
+        add('ramp', x, up, hh, 1); add('block', x + up, top, hh); add('ramp', x + up + top, down, hh, -1);
+        w = up + top + down;
+      } else if (kind === 'steps') {
+        const n = 2 + Math.floor(rand() * 3), sw = k * (0.4 + 0.5 * rand()), sh = h * 0.8;
+        for (let i = 0; i < n; i++) add('block', x + i * sw, (2 * (n - i) - 1) * sw, (i + 1) * sh);
+        w = (2 * n - 1) * sw;
+      } else { w = k * (0.15 + 0.2 * rand()); add('block', x, w, h * 1.7); }
+      const gap = k * Math.max(0.8, 3.5 - 0.15 * d) * (0.6 + 0.8 * rand());
+      x += w + gap;
+    }
+    return out;
+  };
+
+  // The world: ground, end walls, the course's obstacles, and any extra ones.
+  RW.makeWorld = function (course, extra) {
     const world = new pl.World({ gravity: new pl.Vec2(0, -RW.GRAVITY) });
     const ground = world.createBody();
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(RW.WORLD_END, 0)), { friction: 1.0 });
     // Walls so nothing falls off the ends of the world
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(-20, 0), new pl.Vec2(-20, 30)), {});
     ground.createFixture(new pl.EdgeShape(new pl.Vec2(RW.WORLD_END, 0), new pl.Vec2(RW.WORLD_END, 30)), {});
-    for (const ob of (course && course.obstacles) || []) {
+    for (const ob of [...((course && course.obstacles) || []), ...(extra || [])]) {
       const poly = RW.obstaclePoly(ob);
       ground.createFixture(new pl.PolygonShape(poly.map(p => new pl.Vec2(p[0], p[1]))), { friction: 1.0 });
     }
@@ -211,7 +263,8 @@
   //   rules.level: 0 = don't care, higher = stricter about keeping the head level
   class Run {
     constructor(design, brain, opts) {
-      this.world = RW.makeWorld(opts.course);
+      this.world = RW.makeWorld(opts.course, opts.endless);
+      this.endless = opts.endless || null;
       this.robot = RW.buildRobot(this.world, design, opts.strength);
       this.brain = brain;
       this.rules = opts.rules || RW.DEFAULT_RULES;
