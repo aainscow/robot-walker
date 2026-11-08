@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "robot-walker",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8107"],
+      "port": 8107
+    }
+  ]
+}

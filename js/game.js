@@ -1,0 +1,676 @@
+// UI: the robot editor, the training loop, the replay, and all the drawing.
+(function () {
+  'use strict';
+  const RW = window.RW;
+  const $ = s => document.querySelector(s);
+  const $$ = s => [...document.querySelectorAll(s)];
+  const canvas = $('#view'), ctx = canvas.getContext('2d');
+  const chart = $('#chart'), cctx = chart.getContext('2d');
+  const SAVE_KEY = 'robot-walker.v1';
+
+  const COLORS = {
+    sky1: '#bfe3ff', sky2: '#eef7ff', ground: '#6b8f3a', ground2: '#557530', dirt: '#8a6a43',
+    grid: 'rgba(30,60,100,.08)', grid2: 'rgba(30,60,100,.16)',
+    stick: '#2b3954', servo: '#ffb020', hinge: '#ffffff', weld: '#5b6b88', accel: '#3ad29f',
+    hover: '#ff4f9a', ghost: '#2b3954', lead: '#d9480f',
+  };
+
+  const S = {
+    mode: 'build', tool: 'stick',
+    design: null, nextId: 1,
+    opts: { popSize: 40, timeLimit: 15, strength: 1 },
+    trainer: null, running: false, speed: 4, ghosts: true,
+    bestEver: null, history: [],
+    watch: null, wspeed: 1,
+    cam: { x: 1, y: 0.9, s: 120 },
+    drag: null, hover: null, mouse: null,
+  };
+
+  // ---------- persistence ----------
+  function save() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        design: S.design, opts: S.opts,
+        bestEver: S.bestEver && { ...S.bestEver, genome: Array.from(S.bestEver.genome) },
+        history: S.history,
+      }));
+    } catch (e) { /* storage unavailable: fine */ }
+  }
+  function load() {
+    try {
+      const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
+      if (!d || !d.design) return false;
+      S.design = d.design; S.opts = { ...S.opts, ...d.opts };
+      if (d.bestEver) S.bestEver = { ...d.bestEver, genome: Float32Array.from(d.bestEver.genome) };
+      S.history = d.history || [];
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function setDesign(design) {
+    S.design = design;
+    S.nextId = 1 + Math.max(0, ...design.points.map(p => p.id), ...design.sticks.map(s => s.id));
+    fitBuildCamera();
+    forget();
+  }
+  function forget() {
+    S.trainer = null; S.running = false; S.bestEver = null; S.history = []; S.watch = null;
+    save(); updateUI();
+  }
+  // Any change to the robot means the old brain no longer fits it.
+  function designChanged() {
+    const had = S.bestEver || (S.trainer && S.trainer.generation > 0);
+    forget();
+    if (had) toast('Robot changed, so its brain starts again from scratch');
+  }
+
+  // ---------- canvas / camera ----------
+  let W = 0, H = 0, DPR = 1;
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    DPR = window.devicePixelRatio || 1;
+    W = r.width; H = r.height;
+    canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
+  }
+  window.addEventListener('resize', () => { resize(); fitBuildCamera(); });
+  const toScreen = (x, y) => [(x - S.cam.x) * S.cam.s + W / 2, H / 2 - (y - S.cam.y) * S.cam.s];
+  const toWorld = (sx, sy) => [(sx - W / 2) / S.cam.s + S.cam.x, (H / 2 - sy) / S.cam.s + S.cam.y];
+
+  // The build view stays put while you edit; it only refits when a robot is
+  // loaded, the window resizes, or a part ends up off screen.
+  function fitBuildCamera() { S.buildCam = buildCamera(); }
+  function refitIfOffscreen() {
+    for (const p of S.design.points) {
+      const [x, y] = toScreen(p.x, p.y);
+      if (x < 20 || x > W - 20 || y < 20) { fitBuildCamera(); return; }
+    }
+  }
+  function buildCamera() {
+    // Fit the robot (or a default area) with some room around it.
+    const pts = S.design.points;
+    let minX = 0, maxX = 2, maxY = 1.4;
+    for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+    const wspan = Math.max(3, maxX - minX + 2), hspan = Math.max(2, maxY + 0.8);
+    const s = Math.min(W / wspan, (H - 40) / hspan, 220);
+    return { x: (minX + maxX) / 2, y: hspan / 2 - 0.25, s };
+  }
+
+  // ---------- editor ----------
+  const SNAP = 0.05;
+  const snap = v => Math.round(v / SNAP) * SNAP;
+  const pointById = id => S.design.points.find(p => p.id === id);
+  function stickCount(id) { return S.design.sticks.filter(s => s.a === id || s.b === id).length; }
+
+  function hitPoint(sx, sy) {
+    let best = null, bd = 14;
+    for (const p of S.design.points) {
+      const [px, py] = toScreen(p.x, p.y);
+      const d = Math.hypot(px - sx, py - sy);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+  function hitStick(sx, sy) {
+    let best = null, bd = 9;
+    for (const s of S.design.sticks) {
+      const a = pointById(s.a), b = pointById(s.b);
+      const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y);
+      const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+      const t = Math.max(0, Math.min(1, ((sx - ax) * dx + (sy - ay) * dy) / L2));
+      const d = Math.hypot(ax + t * dx - sx, ay + t * dy - sy);
+      if (d < bd) { bd = d; best = s; }
+    }
+    return best;
+  }
+  function hoverTarget(sx, sy) {
+    const t = S.tool;
+    if (t === 'stick' || t === 'move' || t === 'servo' || t === 'weld') { const p = hitPoint(sx, sy); return p && { point: p }; }
+    if (t === 'accel') { const s = hitStick(sx, sy); return s && { stick: s }; }
+    if (t === 'erase') { const p = hitPoint(sx, sy); if (p) return { point: p }; const s = hitStick(sx, sy); return s && { stick: s }; }
+    return null;
+  }
+
+  function evPos(e) { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+  canvas.addEventListener('pointerdown', e => {
+    if (S.mode !== 'build') return;
+    const [sx, sy] = evPos(e);
+    const [wx, wy] = toWorld(sx, sy);
+    const t = S.tool;
+    canvas.setPointerCapture(e.pointerId);
+    if (t === 'stick') {
+      const p = hitPoint(sx, sy);
+      S.drag = { kind: 'stick', from: p ? { id: p.id, x: p.x, y: p.y } : { id: null, x: snap(wx), y: Math.max(0, snap(wy)) } };
+    } else if (t === 'move') {
+      const p = hitPoint(sx, sy);
+      if (p) S.drag = { kind: 'move', p, moved: false };
+    } else if (t === 'servo' || t === 'weld') {
+      const p = hitPoint(sx, sy);
+      if (!p) return;
+      if (stickCount(p.id) < 2) { toast(`A ${t === 'servo' ? 'servo' : 'weld'} goes where two or more sticks meet`); return; }
+      p.kind = p.kind === t ? 'free' : t;
+      designChanged();
+    } else if (t === 'accel') {
+      const s = hitStick(sx, sy);
+      if (!s) return;
+      s.accel = !s.accel;
+      designChanged();
+    } else if (t === 'erase') {
+      const p = hitPoint(sx, sy);
+      if (p) {
+        S.design.sticks = S.design.sticks.filter(s => s.a !== p.id && s.b !== p.id);
+        S.design.points = S.design.points.filter(q => q.id !== p.id);
+      } else {
+        const s = hitStick(sx, sy);
+        if (!s) return;
+        S.design.sticks = S.design.sticks.filter(q => q !== s);
+      }
+      // drop points no stick uses; a joint with <2 sticks can't be a servo/weld
+      S.design.points = S.design.points.filter(q => stickCount(q.id) > 0);
+      for (const q of S.design.points) if (stickCount(q.id) < 2) q.kind = 'free';
+      designChanged();
+    }
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    const [sx, sy] = evPos(e);
+    S.mouse = [sx, sy];
+    if (S.mode !== 'build') return;
+    const [wx, wy] = toWorld(sx, sy);
+    if (S.drag && S.drag.kind === 'move') {
+      S.drag.p.x = snap(wx); S.drag.p.y = Math.max(0, snap(wy)); S.drag.moved = true;
+    }
+    S.hover = hoverTarget(sx, sy);
+    canvas.style.cursor = S.hover || S.drag ? 'pointer' : (S.tool === 'stick' ? 'crosshair' : 'default');
+  });
+
+  canvas.addEventListener('pointercancel', () => { S.drag = null; });
+  canvas.addEventListener('pointerup', e => {
+    if (S.mode !== 'build' || !S.drag) return;
+    const d = S.drag; S.drag = null;
+    setTimeout(refitIfOffscreen, 0);
+    if (d.kind === 'move') {
+      if (d.moved) { mergeAt(d.p); designChanged(); }
+      return;
+    }
+    if (d.kind === 'stick') {
+      const [sx, sy] = evPos(e);
+      const [wx, wy] = toWorld(sx, sy);
+      const hp = hitPoint(sx, sy);
+      const to = hp ? { id: hp.id, x: hp.x, y: hp.y } : { id: null, x: snap(wx), y: Math.max(0, snap(wy)) };
+      if (Math.hypot(to.x - d.from.x, to.y - d.from.y) < 0.1) return;
+      if (d.from.id && d.from.id === to.id) return;
+      const ensure = q => {
+        if (q.id) return q.id;
+        const p = { id: S.nextId++, x: q.x, y: q.y, kind: 'free' };
+        S.design.points.push(p);
+        return p.id;
+      };
+      const a = ensure(d.from), b = ensure(to);
+      if (S.design.sticks.some(s => (s.a === a && s.b === b) || (s.a === b && s.b === a))) return;
+      if (S.design.sticks.length >= 40) { toast('That is a lot of sticks! 40 is the limit.'); return; }
+      S.design.sticks.push({ id: S.nextId++, a, b, accel: false });
+      designChanged();
+    }
+  });
+
+  // Dropping a point on top of another joins them.
+  function mergeAt(p) {
+    const other = S.design.points.find(q => q !== p && Math.hypot(q.x - p.x, q.y - p.y) < 0.02);
+    if (!other) return;
+    for (const s of S.design.sticks) { if (s.a === p.id) s.a = other.id; if (s.b === p.id) s.b = other.id; }
+    S.design.sticks = S.design.sticks.filter(s => s.a !== s.b);
+    S.design.points = S.design.points.filter(q => q !== p);
+  }
+
+  // ---------- training ----------
+  function canTrain() {
+    const info = RW.analyse(S.design);
+    if (!S.design.sticks.length) return 'Build a robot first';
+    if (!info.servos) return 'Your robot needs at least one servo to move';
+    return null;
+  }
+  function ensureTrainer() {
+    if (S.trainer) return true;
+    const why = canTrain();
+    if (why) { toast(why); return false; }
+    S.trainer = new RW.Trainer(S.design, { ...S.opts, seed: S.bestEver });
+    S.trainer.history = S.history;
+    S.trainer.generation = S.history.length;
+    return true;
+  }
+  function onGeneration() {
+    const T = S.trainer;
+    S.bestEver = T.bestEver; S.history = T.history;
+    save(); drawChart(); updateStats();
+  }
+
+  // ---------- watching ----------
+  function startWatch() {
+    if (!S.bestEver) { S.watch = null; return; }
+    const world = RW.makeWorld();
+    const robot = RW.buildRobot(world, S.design, S.opts.strength);
+    S.watch = { world, robot, brain: new RW.Brain(S.bestEver.genome, RW.analyse(S.design)), done: null, hold: 0, dist: 0 };
+    S.cam.x = robot.startX + 1;
+  }
+
+  // ---------- main loop ----------
+  let acc = 0, last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (S.mode === 'train' && S.running && S.trainer) {
+      if (S.speed === 'max') {
+        const t0 = performance.now();
+        while (performance.now() - t0 < 14) if (S.trainer.step()) onGeneration();
+      } else {
+        acc += dt * S.speed;
+        let n = 0;
+        while (acc >= RW.DT && n < 400) { acc -= RW.DT; n++; if (S.trainer.step()) onGeneration(); }
+      }
+      updateLive();
+    } else acc = 0;
+    if (S.mode === 'watch' && S.watch) stepWatch(dt);
+    render();
+    requestAnimationFrame(frame);
+  }
+
+  let wacc = 0;
+  function stepWatch(dt) {
+    const w = S.watch;
+    if (w.done) {
+      w.hold -= dt;
+      if (w.hold <= 0) startWatch();
+      return;
+    }
+    wacc += dt * S.wspeed;
+    while (wacc >= RW.DT) {
+      wacc -= RW.DT;
+      RW.stepRobot(w.world, w.robot, w.brain);
+      w.dist = RW.comX(w.robot) - w.robot.startX;
+      if (w.dist >= RW.FINISH) { w.done = 'finish'; w.hold = 3; break; }
+      if (w.robot.t >= S.opts.timeLimit) { w.done = 'time'; w.hold = 2; break; }
+    }
+    updateAccelReadout();
+  }
+
+  // ---------- drawing ----------
+  function render() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (S.mode === 'build') {
+      if (!S.buildCam) fitBuildCamera();
+      Object.assign(S.cam, S.buildCam);
+    } else {
+      S.cam.s = Math.min(150, Math.max(50, H / 4));
+      S.cam.y = (H / 2 - H * 0.78) / -S.cam.s;
+      let target = null;
+      if (S.mode === 'train' && S.trainer) { const L = S.trainer.leader(); target = RW.comX(L.robot); }
+      if (S.mode === 'watch' && S.watch) target = RW.comX(S.watch.robot);
+      if (target != null && isFinite(target)) S.cam.x += (target + 1 - S.cam.x) * 0.08;
+    }
+    drawWorld();
+    if (S.mode === 'build') drawDesign();
+    else if (S.mode === 'train' && S.trainer) drawTraining();
+    else if (S.mode === 'watch' && S.watch) drawRobot(S.watch.robot, { alpha: 1, lead: true, sensors: true });
+    drawHud();
+  }
+
+  function startX() {
+    if (S.mode === 'build') return 0;
+    if (S.mode === 'train' && S.trainer) return S.trainer.agents[0].robot.startX;
+    if (S.mode === 'watch' && S.watch) return S.watch.robot.startX;
+    return 0;
+  }
+
+  function drawWorld() {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, COLORS.sky1); g.addColorStop(1, COLORS.sky2);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const [x0] = toWorld(0, 0), [x1] = toWorld(W, 0);
+    const [, gy] = toScreen(0, 0);
+
+    if (S.mode === 'build') {
+      // fine grid for building
+      const [, yTop] = toWorld(0, 0);
+      for (let x = Math.floor(x0 / 0.1) * 0.1; x < x1; x += 0.1) {
+        const [sx] = toScreen(x, 0);
+        ctx.strokeStyle = Math.abs(x / 0.5 - Math.round(x / 0.5)) < 1e-3 ? COLORS.grid2 : COLORS.grid;
+        ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, gy); ctx.stroke();
+      }
+      for (let y = 0; y < yTop; y += 0.1) {
+        const [, sy] = toScreen(0, y);
+        ctx.strokeStyle = Math.abs(y / 0.5 - Math.round(y / 0.5)) < 1e-3 ? COLORS.grid2 : COLORS.grid;
+        ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
+      }
+    } else {
+      // distant hills for a sense of motion
+      ctx.fillStyle = 'rgba(120,160,120,.25)';
+      ctx.beginPath(); ctx.moveTo(0, gy);
+      for (let sx = 0; sx <= W; sx += 8) {
+        const wx = (sx - W / 2) / S.cam.s * 0.4 + S.cam.x * 0.4;
+        ctx.lineTo(sx, gy - 40 - 30 * Math.sin(wx * 0.7) - 18 * Math.sin(wx * 1.9 + 1));
+      }
+      ctx.lineTo(W, gy); ctx.fill();
+    }
+
+    // ground
+    ctx.fillStyle = COLORS.dirt; ctx.fillRect(0, gy, W, H - gy);
+    ctx.fillStyle = COLORS.ground; ctx.fillRect(0, gy, W, 8);
+    ctx.fillStyle = COLORS.ground2; ctx.fillRect(0, gy + 8, W, 3);
+
+    // distance markers every metre from the start
+    const sx0 = startX();
+    ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+    for (let m = Math.floor(x0 - sx0) - 1; m < x1 - sx0 + 1; m++) {
+      if (m < 0 || m > RW.FINISH) continue;
+      const [mx] = toScreen(sx0 + m, 0);
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.fillRect(mx - 1, gy + 11, 2, m % 5 === 0 ? 12 : 6);
+      if (m % 5 === 0 && S.mode !== 'build') { ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.fillText(m + ' m', mx, gy + 36); }
+    }
+    // start line
+    const [stx] = toScreen(sx0, 0);
+    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(stx - 2, gy - 2, 4, 12);
+    if (S.mode === 'build') { ctx.fillStyle = 'rgba(40,60,90,.5)'; ctx.fillText('start', stx, gy + 36); }
+    // finish flag
+    const [fx] = toScreen(sx0 + RW.FINISH, 0);
+    if (fx > -40 && fx < W + 40) drawFlag(fx, gy);
+  }
+
+  function drawFlag(fx, gy) {
+    const h = Math.max(60, S.cam.s * 1.6);
+    // chequered strip on the ground
+    for (let i = 0; i < 6; i++) { ctx.fillStyle = i % 2 ? '#111' : '#fff'; ctx.fillRect(fx - 6 + (i % 2) * 6, gy + i * 2, 6, 2); ctx.fillStyle = i % 2 ? '#fff' : '#111'; ctx.fillRect(fx - 6 + ((i + 1) % 2) * 6, gy + i * 2, 6, 2); }
+    ctx.fillStyle = '#444'; ctx.fillRect(fx - 2, gy - h, 4, h);
+    const cw = 9, rows = 4, cols = 5;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      ctx.fillStyle = (r + c) % 2 ? '#111' : '#fff';
+      ctx.fillRect(fx + 2 + c * cw, gy - h + r * cw, cw, cw);
+    }
+    ctx.fillStyle = '#1d2a3a'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('FINISH', fx, gy - h - 8);
+  }
+
+  function stickWidth() { return Math.max(4, RW.STICK_R * 2.4 * S.cam.s); }
+
+  function drawSegment(ax, ay, bx, by, color, width) {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+  }
+  function drawServo(x, y, r, target) {
+    ctx.fillStyle = COLORS.servo; ctx.strokeStyle = '#7a4d00'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const teeth = 8;
+    for (let i = 0; i < teeth * 2; i++) {
+      const a = (i / (teeth * 2)) * Math.PI * 2 + (target || 0);
+      const rr = i % 2 ? r : r * 1.25;
+      ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#7a4d00'; ctx.beginPath(); ctx.arc(x, y, r * 0.35, 0, 7); ctx.fill();
+  }
+  function drawHinge(x, y, r) {
+    ctx.fillStyle = COLORS.hinge; ctx.strokeStyle = COLORS.stick; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.6, 0, 7); ctx.fill(); ctx.stroke();
+  }
+  function drawWeld(x, y, r) {
+    ctx.fillStyle = COLORS.weld; ctx.fillRect(x - r * 0.7, y - r * 0.7, r * 1.4, r * 1.4);
+  }
+  function drawAccel(x, y, ang, r) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(-ang);
+    ctx.fillStyle = COLORS.accel; ctx.strokeStyle = '#0d5e44'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(-r * 1.1, -r * 0.8, r * 2.2, r * 1.6, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0d5e44'; ctx.font = `bold ${Math.round(r * 1.2)}px system-ui`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('A', 0, 1);
+    ctx.restore(); ctx.textBaseline = 'alphabetic';
+  }
+  const jointR = () => Math.max(6, Math.min(12, S.cam.s * 0.07));
+
+  function drawDesign() {
+    const d = S.design, w = stickWidth(), r = jointR();
+    const hov = S.hover;
+    for (const s of d.sticks) {
+      const a = pointById(s.a), b = pointById(s.b);
+      const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y);
+      drawSegment(ax, ay, bx, by, hov && hov.stick === s ? COLORS.hover : COLORS.stick, w);
+    }
+    for (const s of d.sticks) if (s.accel) {
+      const a = pointById(s.a), b = pointById(s.b);
+      const [ax, ay] = toScreen(a.x, a.y), [bx, by] = toScreen(b.x, b.y);
+      drawAccel((ax + bx) / 2, (ay + by) / 2, Math.atan2(b.y - a.y, b.x - a.x), r);
+    }
+    for (const p of d.points) {
+      const [x, y] = toScreen(p.x, p.y);
+      const n = stickCount(p.id);
+      if (p.kind === 'servo' && n >= 2) drawServo(x, y, r, 0);
+      else if (p.kind === 'weld' && n >= 2) drawWeld(x, y, r);
+      else if (n >= 2) drawHinge(x, y, r);
+      else { ctx.fillStyle = COLORS.stick; ctx.beginPath(); ctx.arc(x, y, w / 2 + 1, 0, 7); ctx.fill(); }
+      if (hov && hov.point === p) { ctx.strokeStyle = COLORS.hover; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, r + 4, 0, 7); ctx.stroke(); }
+    }
+    // stick being drawn
+    if (S.drag && S.drag.kind === 'stick' && S.mouse) {
+      const f = S.drag.from;
+      const [fx, fy] = toScreen(f.x, f.y);
+      let [mx, my] = S.mouse;
+      const hp = hitPoint(mx, my);
+      if (hp) [mx, my] = toScreen(hp.x, hp.y);
+      else { const [wx, wy] = toWorld(mx, my); [mx, my] = toScreen(snap(wx), Math.max(0, snap(wy))); }
+      ctx.globalAlpha = 0.5; drawSegment(fx, fy, mx, my, COLORS.stick, w); ctx.globalAlpha = 1;
+      const len = Math.hypot(mx - fx, my - fy) / S.cam.s;
+      ctx.fillStyle = '#1d2a3a'; ctx.font = '12px system-ui'; ctx.fillText(len.toFixed(2) + ' m', (fx + mx) / 2 + 12, (fy + my) / 2 - 12);
+    }
+    if (!d.sticks.length) {
+      ctx.fillStyle = 'rgba(29,42,58,.6)'; ctx.font = '16px system-ui'; ctx.textAlign = 'center';
+      ctx.fillText('Drag to draw a stick, or pick a robot on the left to start from', W / 2, H * 0.35);
+    }
+  }
+
+  function drawRobot(robot, o) {
+    const w = stickWidth(), r = jointR();
+    ctx.globalAlpha = o.alpha;
+    const col = o.lead ? COLORS.stick : COLORS.ghost;
+    for (const st of robot.sticks) {
+      const b = st.body, p = b.getPosition(), a = b.getAngle(), c = Math.cos(a), s = Math.sin(a);
+      const [ax, ay] = toScreen(p.x - c * st.half, p.y - s * st.half), [bx, by] = toScreen(p.x + c * st.half, p.y + s * st.half);
+      drawSegment(ax, ay, bx, by, col, w);
+    }
+    if (o.lead || o.alpha > 0.3) {
+      for (const st of robot.sticks) if (st.accel) {
+        const p = st.body.getPosition(); const [x, y] = toScreen(p.x, p.y);
+        drawAccel(x, y, st.body.getAngle(), r);
+      }
+      for (const h of robot.hinges) { const p = h.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawHinge(x, y, r); }
+      for (const h of robot.welds) { const p = h.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawWeld(x, y, r); }
+      for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); drawServo(x, y, r, -sv.joint.getJointAngle()); }
+    } else {
+      ctx.fillStyle = COLORS.servo;
+      for (const sv of robot.servos) { const p = sv.joint.getAnchorA(); const [x, y] = toScreen(p.x, p.y); ctx.beginPath(); ctx.arc(x, y, r * 0.6, 0, 7); ctx.fill(); }
+    }
+    if (o.sensors) {
+      // the accelerometer's reading, drawn as an arrow (it points "up" when still)
+      for (const a of robot.accels) {
+        const p = a.body.getPosition(), ang = a.body.getAngle(), c = Math.cos(ang), s = Math.sin(ang);
+        const wx = c * a.f.x - s * a.f.y, wy = s * a.f.x + c * a.f.y;
+        const k = 0.05;
+        const [x0, y0] = toScreen(p.x, p.y), [x1, y1] = toScreen(p.x + wx * k, p.y + wy * k);
+        ctx.strokeStyle = COLORS.accel; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+        const h = Math.atan2(y1 - y0, x1 - x0);
+        ctx.fillStyle = COLORS.accel; ctx.beginPath(); ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 - 10 * Math.cos(h - 0.4), y1 - 10 * Math.sin(h - 0.4)); ctx.lineTo(x1 - 10 * Math.cos(h + 0.4), y1 - 10 * Math.sin(h + 0.4)); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTraining() {
+    const T = S.trainer, L = T.leader();
+    if (S.ghosts) for (const a of T.agents) if (a !== L) drawRobot(a.robot, { alpha: 0.16 });
+    drawRobot(L.robot, { alpha: 1, lead: true });
+  }
+
+  function drawHud() {
+    const hud = $('#hud');
+    let html = '';
+    if (S.mode === 'train' && S.trainer) {
+      const T = S.trainer;
+      html = `Generation ${T.generation + 1} · ${T.t.toFixed(1)} / ${T.timeLimit}s`;
+      if (!S.running) html += ' · paused';
+    } else if (S.mode === 'train') {
+      html = 'Press Start learning';
+    } else if (S.mode === 'watch') {
+      const w = S.watch;
+      if (!w) html = 'Nothing learned yet, train your robot first';
+      else {
+        html = `${w.robot.t.toFixed(1)}s · ${Math.max(0, w.dist).toFixed(2)} m`;
+        if (w.done === 'finish') html += `<div class="big-msg">🏁 Made it in ${w.robot.t.toFixed(1)}s!</div>`;
+        if (w.done === 'time') html += `<div class="big-msg">Out of time at ${w.dist.toFixed(1)} m</div>`;
+      }
+    }
+    if (hud.innerHTML !== html) hud.innerHTML = html;
+  }
+
+  function drawChart() {
+    const cw = chart.clientWidth || 280, ch = chart.clientHeight || 130, dpr = window.devicePixelRatio || 1;
+    if (chart.width !== Math.round(cw * dpr)) { chart.width = Math.round(cw * dpr); chart.height = Math.round(ch * dpr); }
+    cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cctx.clearRect(0, 0, cw, ch);
+    const hist = S.history;
+    const pad = { l: 30, r: 8, t: 8, b: 18 };
+    const maxY = Math.max(2, RW.FINISH * (hist.some(h => h.best > RW.FINISH * 0.5) ? 1.05 : 0.5), ...hist.map(h => h.best));
+    const n = Math.max(10, hist.length);
+    const X = i => pad.l + (i / (n - 1)) * (cw - pad.l - pad.r);
+    const Y = v => ch - pad.b - (Math.max(-1, v) / maxY) * (ch - pad.t - pad.b);
+    cctx.font = '10px system-ui'; cctx.fillStyle = '#94a0b8'; cctx.strokeStyle = 'rgba(148,160,184,.2)'; cctx.lineWidth = 1;
+    const step = maxY > 12 ? 5 : maxY > 5 ? 2 : 1;
+    for (let v = 0; v <= maxY; v += step) { cctx.beginPath(); cctx.moveTo(pad.l, Y(v)); cctx.lineTo(cw - pad.r, Y(v)); cctx.stroke(); cctx.textAlign = 'right'; cctx.fillText(v + 'm', pad.l - 4, Y(v) + 3); }
+    if (maxY >= RW.FINISH) { cctx.setLineDash([4, 3]); cctx.strokeStyle = '#3ad29f'; cctx.beginPath(); cctx.moveTo(pad.l, Y(RW.FINISH)); cctx.lineTo(cw - pad.r, Y(RW.FINISH)); cctx.stroke(); cctx.setLineDash([]); }
+    cctx.textAlign = 'center'; cctx.fillText('generation', (cw + pad.l) / 2, ch - 4);
+    if (!hist.length) return;
+    const line = (key, color, wdt) => {
+      cctx.strokeStyle = color; cctx.lineWidth = wdt; cctx.beginPath();
+      hist.forEach((h, i) => (i ? cctx.lineTo(X(i), Y(h[key])) : cctx.moveTo(X(i), Y(h[key]))));
+      if (hist.length === 1) cctx.lineTo(X(0) + 2, Y(hist[0][key]));
+      cctx.stroke();
+    };
+    line('avg', '#94a0b8', 1.5);
+    line('best', '#ffb020', 2);
+  }
+
+  // ---------- panel ----------
+  const fmtDist = v => (v == null ? '–' : Math.max(0, v).toFixed(1) + ' m');
+  function bestText(b) {
+    if (!b) return '–';
+    return b.time != null ? `🏁 ${b.time.toFixed(1)}s` : fmtDist(b.distance);
+  }
+  function updateStats() {
+    const T = S.trainer, last = S.history[S.history.length - 1];
+    $('#gen').textContent = T ? T.generation + 1 : S.history.length;
+    $('#best').textContent = bestText(S.bestEver);
+    $('#fin').textContent = last ? `${last.finished}` : '0';
+  }
+  let liveTick = 0;
+  function updateLive() {
+    if (++liveTick % 6) return;
+    const T = S.trainer;
+    $('#lead').textContent = fmtDist(T.leader().dist);
+    $('#prog').style.width = (100 * T.t / T.timeLimit).toFixed(1) + '%';
+    $('#gen').textContent = T.generation + 1;
+  }
+  function updateAccelReadout() {
+    const w = S.watch, el = $('#accelRead');
+    if (!w || !w.robot.accels.length) { el.textContent = 'No accelerometer fitted. Add one to a stick so the robot can feel which way is down.'; return; }
+    el.innerHTML = w.robot.accels.map((a, i) => {
+      const tilt = Math.atan2(a.f.x, a.f.y) * 180 / Math.PI;
+      return `#${i + 1}: x ${a.f.x.toFixed(1)}, y ${a.f.y.toFixed(1)} m/s² · feels tilted ${tilt.toFixed(0)}°`;
+    }).join('<br>') + '<br><small>The green arrow shows what it feels. Standing still it points up (gravity).</small>';
+  }
+
+  const HINTS = {
+    stick: 'Drag from one point to another to place a stick. Start or end on an existing point to join them; where sticks meet is a free hinge.',
+    servo: 'Click a joint (where two or more sticks meet) to put a servo there. The brain moves servos to make the robot go.',
+    weld: 'Click a joint to weld it solid, so those sticks can’t bend there.',
+    accel: 'Click a stick to fit an accelerometer. It feels gravity and bumps, so the brain knows which way is down.',
+    move: 'Drag a point to move it. Drop it on another point to join them.',
+    erase: 'Click a point or stick to remove it.',
+  };
+
+  function updateUI() {
+    $$('#modes button').forEach(b => b.classList.toggle('on', b.dataset.mode === S.mode));
+    $$('#panel section').forEach(s => (s.hidden = s.dataset.for !== S.mode));
+    $$('.tools button').forEach(b => b.classList.toggle('on', b.dataset.tool === S.tool));
+    $('#hint').textContent = HINTS[S.tool];
+    const info = RW.analyse(S.design);
+    const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+    $('#parts').textContent = `${plural(S.design.sticks.length, 'stick')} · ${plural(info.servos, 'servo channel')} · ${plural(info.accels, 'accelerometer')}`;
+    const run = $('#run');
+    run.textContent = S.running ? '❚❚ Pause' : (S.history.length ? '▶ Keep learning' : '▶ Start learning');
+    run.classList.toggle('pause', S.running);
+    $$('#speed button').forEach(b => b.classList.toggle('on', String(S.speed) === b.dataset.speed));
+    $$('#wspeed button').forEach(b => b.classList.toggle('on', String(S.wspeed) === b.dataset.speed));
+    $('#pop').value = S.opts.popSize; $('#tlimit').value = S.opts.timeLimit;
+    $('#strength').value = S.opts.strength; $('#strengthOut').textContent = (+S.opts.strength).toFixed(1) + '×';
+    const b = S.bestEver;
+    $('#winfo').textContent = b ? `Best brain so far, from generation ${b.generation}: ${b.time != null ? 'finished in ' + b.time.toFixed(1) + 's' : 'got ' + fmtDist(b.distance)}.` : 'Nothing learned yet. Train your robot first.';
+    if (!S.trainer) { $('#lead').textContent = '–'; $('#prog').style.width = '0'; }
+    updateStats(); drawChart(); updateAccelReadout();
+  }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+
+  function setMode(m) {
+    if (m === S.mode) return;
+    if (m !== 'build') {
+      const why = canTrain();
+      if (why) { toast(why); return; }
+    }
+    if (S.mode === 'train') S.running = false;
+    S.mode = m;
+    if (m === 'watch') startWatch();
+    if (m === 'train') { ensureTrainer(); S.cam.x = S.trainer ? S.trainer.agents[0].robot.startX + 1 : 1; }
+    updateUI();
+  }
+
+  $$('#modes button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+  $$('.tools button').forEach(b => b.addEventListener('click', () => { S.tool = b.dataset.tool; updateUI(); }));
+  const presets = $('#presets');
+  for (const [key, p] of Object.entries(RW.PRESETS)) {
+    const b = document.createElement('button'); b.textContent = p.name;
+    b.addEventListener('click', () => { setDesign(p.design()); toast(`${p.name} loaded. Now go to Train.`); });
+    presets.appendChild(b);
+  }
+  $('#clear').addEventListener('click', () => setDesign({ points: [], sticks: [] }));
+  $('#strength').addEventListener('input', e => { S.opts.strength = +e.target.value; $('#strengthOut').textContent = S.opts.strength.toFixed(1) + '×'; });
+  $('#strength').addEventListener('change', () => designChanged());
+  $('#run').addEventListener('click', () => {
+    if (!S.running && !ensureTrainer()) return;
+    S.running = !S.running; updateUI();
+  });
+  $$('#speed button').forEach(b => b.addEventListener('click', () => { S.speed = b.dataset.speed === 'max' ? 'max' : +b.dataset.speed; updateUI(); }));
+  $$('#wspeed button').forEach(b => b.addEventListener('click', () => { S.wspeed = +b.dataset.speed; updateUI(); }));
+  $('#pop').addEventListener('change', e => { S.opts.popSize = +e.target.value; restartTrainerKeepingBest(); });
+  $('#tlimit').addEventListener('change', e => { S.opts.timeLimit = +e.target.value; restartTrainerKeepingBest(); });
+  $('#ghosts').addEventListener('change', e => { S.ghosts = e.target.checked; });
+  $('#reset').addEventListener('click', () => { forget(); toast('Brain wiped. Starting from random again.'); });
+  $('#replay').addEventListener('click', () => startWatch());
+
+  // Changing population or time limit restarts the generation but keeps the best brain as a seed.
+  function restartTrainerKeepingBest() {
+    const wasRunning = S.running;
+    S.trainer = null; S.running = false;
+    save();
+    if (S.mode === 'train' && ensureTrainer()) S.running = wasRunning;
+    updateUI();
+  }
+
+  // ---------- start ----------
+  resize();
+  if (!load()) S.design = RW.PRESETS.dog.design();
+  S.nextId = 1 + Math.max(0, ...S.design.points.map(p => p.id), ...S.design.sticks.map(s => s.id));
+  updateUI();
+  requestAnimationFrame(frame);
+  window.__RW_STATE = S; // handy for poking at from the console
+})();

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot Walker</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🤖 Robot Walker</h1>
+  <nav id="modes">
+    <button data-mode="build" class="on">1 · Build</button>
+    <button data-mode="train">2 · Train</button>
+    <button data-mode="watch">3 · Watch best</button>
+  </nav>
+</header>
+<main>
+  <aside id="panel">
+    <section data-for="build">
+      <h2>Parts</h2>
+      <div class="tools">
+        <button data-tool="stick" class="on"><span class="ic">╱</span>Stick</button>
+        <button data-tool="servo"><span class="ic ic-servo">⚙</span>Servo</button>
+        <button data-tool="weld"><span class="ic">■</span>Weld</button>
+        <button data-tool="accel"><span class="ic ic-accel">A</span>Accel&shy;erometer</button>
+        <button data-tool="move"><span class="ic">✥</span>Move</button>
+        <button data-tool="erase"><span class="ic">✕</span>Erase</button>
+      </div>
+      <p id="hint" class="hint"></p>
+      <p id="parts" class="parts"></p>
+      <h2>Start from</h2>
+      <div id="presets" class="presets"></div>
+      <button id="clear" class="ghost">Clear everything</button>
+      <label class="row">Servo strength <input id="strength" type="range" min="0.5" max="2.5" step="0.1" value="1"><output id="strengthOut">1.0×</output></label>
+    </section>
+
+    <section data-for="train" hidden>
+      <button id="run" class="big">▶ Start learning</button>
+      <div class="seg" id="speed">
+        <button data-speed="1">1×</button><button data-speed="4" class="on">4×</button><button data-speed="16">16×</button><button data-speed="max">Max</button>
+      </div>
+      <div class="stats">
+        <div><b id="gen">0</b><span>generation</span></div>
+        <div><b id="lead">–</b><span>leader now</span></div>
+        <div><b id="best">–</b><span>best ever</span></div>
+        <div><b id="fin">0</b><span>finished last gen</span></div>
+      </div>
+      <div class="progress"><div id="prog"></div></div>
+      <canvas id="chart" width="280" height="130"></canvas>
+      <p class="legend"><i class="l-best"></i>best distance <i class="l-avg"></i>average</p>
+      <label class="row">Robots per generation <select id="pop"><option>20</option><option selected>40</option><option>80</option></select></label>
+      <label class="row">Seconds per try <select id="tlimit"><option>10</option><option selected>15</option><option>20</option><option>30</option></select></label>
+      <label class="row check"><input id="ghosts" type="checkbox" checked> Show the whole generation</label>
+      <button id="reset" class="ghost">Forget everything learned</button>
+      <p class="hint">Every robot in a generation gets its own brain. The ones that get furthest are the parents of the next generation, with small random mutations. Give it a few dozen generations.</p>
+    </section>
+
+    <section data-for="watch" hidden>
+      <button id="replay" class="big">↻ Replay</button>
+      <div class="seg" id="wspeed">
+        <button data-speed="0.25">¼×</button><button data-speed="1" class="on">1×</button><button data-speed="3">3×</button>
+      </div>
+      <p id="winfo" class="hint"></p>
+      <h2>Accelerometer</h2>
+      <div id="accelRead" class="hint">No accelerometer fitted. Add one to a stick so the robot can feel which way is down.</div>
+    </section>
+  </aside>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud"></div>
+    <div id="toast"></div>
+  </div>
+</main>
+<script src="vendor/planck.min.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/brain.js"></script>
+<script src="js/presets.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
