@@ -56,6 +56,7 @@
     }
   }
   RW.Brain = Brain;
+  RW.HIDDEN = HIDDEN;
 
   // Genetic algorithm: keep the best few, breed the rest from tournament winners.
   RW.evolve = function (pop, fitness, opts) {

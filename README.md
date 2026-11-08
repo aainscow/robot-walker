@@ -43,6 +43,12 @@ folder: `python3 -m http.server 8107`.
    time limit (30 s, 1 or 3 minutes, or as long as it can) on flat ground
    that goes on for 500 m. It stops early if the robot falls or makes no
    progress for 10 s.
+   **Show the brain working** draws the robot's neural network live under the
+   replay: every input with its current value (clock, joint angles,
+   accelerometer, camera), the 8 hidden units, and each servo's target next to
+   where it really is. Connections glow with the signal they carry right now
+   (orange pushes up, blue pushes down). Hover a servo there, or click one on
+   the robot, to trace only what feeds it.
 
 The design and the best brain are saved in the browser's localStorage.
 
